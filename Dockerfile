@@ -9,4 +9,6 @@ COPY . .
 
 EXPOSE 8002
 
+ENV PYTHONPATH=/app
+
 CMD ["python", "http_api/main.py"]
