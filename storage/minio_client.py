@@ -20,7 +20,7 @@ class MinioReader:
         self._access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self._secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
         self._bucket = os.getenv("MINIO_BUCKET", "wiki-data")
-        self._secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        self._secure = False
 
     def _client(self) -> Minio:
         return Minio(
