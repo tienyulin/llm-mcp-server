@@ -1,8 +1,7 @@
 """
-MinioReader: responsible for fetching wiki.json from Minio object storage.
+MinioReader: responsible for fetching wiki files from Minio object storage.
 """
 
-import json
 import logging
 import os
 
@@ -43,14 +42,19 @@ class MinioReader:
         except Exception as e:
             logger.warning(f"Could not ensure bucket existence: {e}")
 
-    def get_wiki(self) -> dict:
-        """Fetch wiki.json from Minio. Returns empty structure if not found."""
+    def get_file(self, path: str) -> str | None:
+        """Fetch a text file from Minio. Returns None if not found."""
         client = self._client()
         try:
-            obj = client.get_object(self._bucket, "wiki.json")
-            return json.loads(obj.read().decode())
+            obj = client.get_object(self._bucket, path)
+            return obj.read().decode()
         except S3Error as e:
             if e.code == "NoSuchKey":
-                logger.warning("wiki.json not found — wiki may not be generated yet")
-                return {"apis": {}, "metadata": {}}
+                return None
             raise
+
+    def list_files(self, prefix: str = "") -> list[str]:
+        """List all object keys under the given prefix."""
+        client = self._client()
+        objects = client.list_objects(self._bucket, prefix=prefix, recursive=True)
+        return [obj.object_name for obj in objects]

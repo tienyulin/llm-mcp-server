@@ -1,5 +1,5 @@
 """
-Unit tests for WikiService.
+Unit tests for WikiService (browsing interface).
 
 MinioReader is mocked — these tests exercise pure business logic only.
 """
@@ -11,156 +11,106 @@ import pytest
 from services.wiki_service import WikiService
 
 # ---------------------------------------------------------------------------
-# Shared test fixture data
+# Sample data
 # ---------------------------------------------------------------------------
 
-SAMPLE_WIKI = {
-    "apis": {
-        "inventory": {
-            "GET /inventory/{id}": {
-                "description": "Get inventory item",
-                "method": "GET",
-                "path": "/inventory/{id}",
-            },
-            "POST /inventory": {
-                "description": "Create inventory item",
-                "method": "POST",
-                "path": "/inventory",
-            },
-            "PUT /inventory/{id}": {
-                "description": "Update inventory item",
-                "method": "PUT",
-                "path": "/inventory/{id}",
-            },
-        }
-    },
-    "metadata": {"version": "1.0"},
+SAMPLE_FILES = {
+    "overview.md": "---\ntitle: Overview\ntype: overview\n---\n\n# Overview",
+    "llms.txt": "---\ntitle: Index\ntype: overview\n---\n\n# Index",
+    "api/users.md": "---\ntitle: Users\ntype: api_module\n---\n\n# Users API",
+    "api/orders.md": "---\ntitle: Orders\ntype: api_module\n---\n\n# Orders API",
+    "architecture/system.md": "---\ntitle: System\ntype: architecture\n---\n\n# System",
 }
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def service() -> WikiService:
-    """WikiService backed by a mock MinioReader returning SAMPLE_WIKI."""
-    mock_reader = MagicMock()
-    mock_reader.get_wiki.return_value = SAMPLE_WIKI
-    return WikiService(mock_reader)
-
-
-@pytest.fixture
-def empty_service() -> WikiService:
-    """WikiService backed by a mock MinioReader returning an empty wiki."""
-    mock_reader = MagicMock()
-    mock_reader.get_wiki.return_value = {"apis": {}, "metadata": {}}
-    return WikiService(mock_reader)
+    mock = MagicMock()
+    mock.list_files.return_value = list(SAMPLE_FILES.keys())
+    mock.get_file.side_effect = lambda path: SAMPLE_FILES.get(path)
+    return WikiService(mock)
 
 
 # ---------------------------------------------------------------------------
-# list_apis tests
+# list_directory tests
 # ---------------------------------------------------------------------------
 
 
-def test_list_apis_all(service: WikiService) -> None:
-    """No filter → all modules returned."""
-    result = service.list_apis()
-    assert set(result.keys()) == {"inventory"}
-    assert "GET /inventory/{id}" in result["inventory"]
-    assert "POST /inventory" in result["inventory"]
-    assert "PUT /inventory/{id}" in result["inventory"]
-    assert len(result["inventory"]) == 3
+def test_list_directory_root(service: WikiService) -> None:
+    items = service.list_directory("/")
+    names = {i["name"] for i in items}
+    # Should see files at root + subdirectories
+    assert "overview.md" in names
+    assert "llms.txt" in names
+    assert "api" in names
+    assert "architecture" in names
 
 
-def test_list_apis_module_filter(service: WikiService) -> None:
-    """Filter matching an existing module returns only that module."""
-    result = service.list_apis("inventory")
-    assert list(result.keys()) == ["inventory"]
-    assert len(result["inventory"]) == 3
+def test_list_directory_api(service: WikiService) -> None:
+    items = service.list_directory("api/")
+    names = {i["name"] for i in items}
+    assert "users.md" in names
+    assert "orders.md" in names
+    # No cross-contamination from other dirs
+    assert "system.md" not in names
 
 
-def test_list_apis_module_filter_case_insensitive(service: WikiService) -> None:
-    """Module filter is case-insensitive."""
-    result = service.list_apis("INVENTORY")
-    assert "inventory" in result
+def test_list_directory_types(service: WikiService) -> None:
+    items = service.list_directory("/")
+    types = {i["name"]: i["type"] for i in items}
+    assert types["overview.md"] == "file"
+    assert types["api"] == "directory"
 
 
-def test_list_apis_module_filter_no_match(service: WikiService) -> None:
-    """Filter for a non-existent module returns an empty dict."""
-    result = service.list_apis("users")
-    assert result == {}
-
-
-def test_list_apis_empty_wiki(empty_service: WikiService) -> None:
-    """Empty wiki → empty dict."""
-    result = empty_service.list_apis()
-    assert result == {}
+def test_list_directory_empty(service: WikiService) -> None:
+    service._minio.list_files.return_value = []
+    items = service.list_directory("/")
+    assert items == []
 
 
 # ---------------------------------------------------------------------------
-# search_apis tests
+# read_file tests
 # ---------------------------------------------------------------------------
 
 
-def test_search_apis_found(service: WikiService) -> None:
-    """Query matching a path returns at least one hit."""
-    hits = service.search_apis("inventory")
-    assert len(hits) > 0
-    modules = {h["module"] for h in hits}
-    assert "inventory" in modules
+def test_read_file_found(service: WikiService) -> None:
+    content = service.read_file("overview.md")
+    assert "# Overview" in content
 
 
-def test_search_apis_specific_path(service: WikiService) -> None:
-    """Query for a unique path segment returns the correct endpoint."""
-    hits = service.search_apis("Create inventory")
-    assert len(hits) == 1
-    assert hits[0]["api_key"] == "POST /inventory"
+def test_read_file_not_found(service: WikiService) -> None:
+    service._minio.get_file.return_value = None
+    with pytest.raises(FileNotFoundError):
+        service.read_file("nonexistent.md")
 
 
-def test_search_apis_no_match(service: WikiService) -> None:
-    """Query that matches nothing returns an empty list."""
-    hits = service.search_apis("zzznomatch999")
-    assert hits == []
-
-
-def test_search_apis_case_insensitive(service: WikiService) -> None:
-    """Search is case-insensitive."""
-    hits_lower = service.search_apis("get inventory")
-    hits_upper = service.search_apis("GET INVENTORY")
-    assert len(hits_lower) == len(hits_upper)
+def test_read_file_api_module(service: WikiService) -> None:
+    content = service.read_file("api/users.md")
+    assert "Users API" in content
 
 
 # ---------------------------------------------------------------------------
-# get_api_detail tests
+# parse_frontmatter tests
 # ---------------------------------------------------------------------------
 
 
-def test_get_api_detail_found(service: WikiService) -> None:
-    """Valid module + api_key returns a dict with expected fields."""
-    detail = service.get_api_detail("inventory", "GET /inventory/{id}")
-    assert detail is not None
-    assert detail["module"] == "inventory"
-    assert detail["api_key"] == "GET /inventory/{id}"
-    assert detail["description"] == "Get inventory item"
-    assert detail["method"] == "GET"
-    assert detail["path"] == "/inventory/{id}"
+def test_parse_frontmatter_valid(service: WikiService) -> None:
+    markdown = "---\ntitle: Test\ntype: overview\n---\n\n# Body"
+    fm, body = service.parse_frontmatter(markdown)
+    assert fm["title"] == "Test"
+    assert fm["type"] == "overview"
+    assert "# Body" in body
 
 
-def test_get_api_detail_not_found(service: WikiService) -> None:
-    """Wrong api_key for a valid module returns None."""
-    detail = service.get_api_detail("inventory", "DELETE /inventory/{id}")
-    assert detail is None
+def test_parse_frontmatter_no_frontmatter(service: WikiService) -> None:
+    markdown = "# Just a body"
+    fm, body = service.parse_frontmatter(markdown)
+    assert fm == {}
+    assert body == "# Just a body"
 
 
-def test_get_api_detail_wrong_module(service: WikiService) -> None:
-    """Wrong module returns None even if the api_key would exist elsewhere."""
-    detail = service.get_api_detail("users", "GET /inventory/{id}")
-    assert detail is None
-
-
-def test_get_api_detail_empty_wiki(empty_service: WikiService) -> None:
-    """get_api_detail on empty wiki returns None."""
-    detail = empty_service.get_api_detail("inventory", "GET /inventory/{id}")
-    assert detail is None
+def test_parse_frontmatter_empty_frontmatter(service: WikiService) -> None:
+    markdown = "---\n---\n\n# Body"
+    fm, body = service.parse_frontmatter(markdown)
+    assert fm == {}
+    assert "# Body" in body

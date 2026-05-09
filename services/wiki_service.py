@@ -1,104 +1,72 @@
 """
-WikiService: business logic for querying the API wiki.
+WikiService: file browsing interface for the Karpathy-style wiki.
 """
 
-import json
 import logging
-import re
 
-from models.wiki import ApiEntry
+import yaml
+
 from storage.minio_client import MinioReader
 
 logger = logging.getLogger(__name__)
 
 
 class WikiService:
-    """Provides list, search, and detail lookup over the API wiki."""
+    """Provides directory listing and file reading over the wiki stored in Minio."""
 
-    def __init__(self, reader: MinioReader) -> None:
-        self._reader = reader
+    def __init__(self, minio_client: MinioReader) -> None:
+        self._minio = minio_client
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    def list_directory(self, path: str = "/") -> list[dict]:
+        """List files and subdirectories at the given path."""
+        prefix = "" if path in ("/", "") else path.rstrip("/") + "/"
 
-    def _all_apis(self, wiki: dict) -> list[ApiEntry]:
-        """Flatten the wiki structure into a list of ApiEntry records."""
-        apis: list[ApiEntry] = []
-        for module, endpoints in wiki.get("apis", {}).items():
-            for api_key, info in endpoints.items():
-                entry: ApiEntry = {
-                    "module": module,
-                    "api_key": api_key,
-                    **info,
-                }
-                apis.append(entry)
-        return apis
+        all_keys = self._minio.list_files(prefix)
 
-    @staticmethod
-    def _tool_name(module: str, api_key: str) -> str:
-        """Convert module + API key to a valid MCP tool name."""
-        raw = f"{module}__{api_key}"
-        return re.sub(r"[^a-zA-Z0-9_]", "_", raw)
+        seen_dirs: set[str] = set()
+        items: list[dict] = []
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def list_apis(self, module_filter: str = "") -> dict[str, list[str]]:
-        """
-        Return all API keys grouped by module.
-
-        Args:
-            module_filter: if non-empty, only return the matching module (case-insensitive).
-
-        Returns:
-            dict mapping module name → list of api_key strings.
-        """
-        wiki = self._reader.get_wiki()
-        filter_lower = module_filter.strip().lower()
-        result: dict[str, list[str]] = {}
-        for module, endpoints in wiki.get("apis", {}).items():
-            if filter_lower and module.lower() != filter_lower:
+        for key in all_keys:
+            # Strip the prefix to get the relative path
+            relative = key[len(prefix):]
+            if not relative:
                 continue
-            result[module] = list(endpoints.keys())
-        return result
 
-    def search_apis(self, query: str) -> list[ApiEntry]:
-        """
-        Search all API records for a keyword.
+            parts = relative.split("/")
+            if len(parts) > 1:
+                # It's inside a subdirectory
+                dir_name = parts[0]
+                if dir_name not in seen_dirs:
+                    seen_dirs.add(dir_name)
+                    dir_path = prefix + dir_name + "/"
+                    items.append({"type": "directory", "name": dir_name, "path": dir_path})
+            else:
+                # Direct file
+                items.append({"type": "file", "name": parts[0], "path": key})
 
-        Matches against the full JSON representation of each record
-        (path, description, parameter names, etc.).
+        return items
 
-        Args:
-            query: search keyword (case-insensitive).
+    def read_file(self, path: str) -> str:
+        """Read complete file content from Minio."""
+        content = self._minio.get_file(path)
+        if content is None:
+            raise FileNotFoundError(f"File not found: {path}")
+        return content
 
-        Returns:
-            List of matching ApiEntry records.
-        """
-        wiki = self._reader.get_wiki()
-        query_lower = query.strip().lower()
-        hits: list[ApiEntry] = []
-        for api in self._all_apis(wiki):
-            if query_lower in json.dumps(api).lower():
-                hits.append(api)
-        return hits
+    def parse_frontmatter(self, markdown: str) -> tuple[dict, str]:
+        """Parse YAML frontmatter from markdown. Returns (frontmatter_dict, body)."""
+        if not markdown.startswith("---"):
+            return {}, markdown
 
-    def get_api_detail(self, module: str, api_key: str) -> ApiEntry | None:
-        """
-        Return the full detail record for a specific API endpoint.
+        end_idx = markdown.find("---", 3)
+        if end_idx == -1:
+            return {}, markdown
 
-        Args:
-            module:  module name (exact match).
-            api_key: API key string such as 'GET /inventory/{id}'.
+        frontmatter_str = markdown[3:end_idx].strip()
+        body = markdown[end_idx + 3:].strip()
 
-        Returns:
-            ApiEntry dict on success, or None if not found.
-        """
-        wiki = self._reader.get_wiki()
-        endpoints = wiki.get("apis", {}).get(module, {})
-        info = endpoints.get(api_key)
-        if info is None:
-            return None
-        return {"module": module, "api_key": api_key, **info}
+        try:
+            frontmatter = yaml.safe_load(frontmatter_str)
+            return frontmatter or {}, body
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML frontmatter: {e}")
