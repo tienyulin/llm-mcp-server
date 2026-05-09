@@ -20,7 +20,8 @@ class MinioReader:
         self._access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self._secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
         self._bucket = os.getenv("MINIO_BUCKET", "wiki-data")
-        self._secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        self._secure = False
+        self._ensure_bucket()
 
     def _client(self) -> Minio:
         return Minio(
@@ -29,6 +30,18 @@ class MinioReader:
             secret_key=self._secret_key,
             secure=self._secure,
         )
+
+    def _ensure_bucket(self) -> None:
+        """Ensure bucket exists, create if not."""
+        client = self._client()
+        try:
+            if not client.bucket_exists(self._bucket):
+                client.make_bucket(self._bucket)
+                logger.info(f"Created bucket: {self._bucket}")
+            else:
+                logger.debug(f"Bucket exists: {self._bucket}")
+        except Exception as e:
+            logger.warning(f"Could not ensure bucket existence: {e}")
 
     def get_wiki(self) -> dict:
         """Fetch wiki.json from Minio. Returns empty structure if not found."""

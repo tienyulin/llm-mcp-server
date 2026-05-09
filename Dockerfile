@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir --trusted-host pypi.python.org --trusted-host pyp
 
 COPY . .
 
+ENV PYTHONPATH=/app
+
 EXPOSE 8002
 
 ENV PYTHONPATH=/app
