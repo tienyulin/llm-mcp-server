@@ -27,6 +27,8 @@ class WikiService:
         items: list[dict] = []
 
         for key in all_keys:
+            if key.endswith(".json"):
+                continue
             # Strip the prefix to get the relative path
             relative = key[len(prefix):]
             if not relative:
