@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
+from . import main as main_module
 from .main import app
 
 SAMPLE_WIKI = {
@@ -18,6 +19,14 @@ SAMPLE_WIKI = {
     },
     "metadata": {"version": "1.0"},
 }
+
+
+@pytest.fixture(autouse=True)
+def _clear_wiki_cache():
+    """The read path caches the wiki; clear it so each test sees its own reader."""
+    main_module.wiki_cache.clear()
+    yield
+    main_module.wiki_cache.clear()
 
 
 @pytest.fixture

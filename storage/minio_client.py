@@ -2,6 +2,7 @@
 MinioReader: responsible for fetching wiki files from Minio object storage.
 """
 
+import json
 import logging
 import os
 
@@ -52,6 +53,13 @@ class MinioReader:
             if e.code == "NoSuchKey":
                 return None
             raise
+
+    def get_wiki(self) -> dict:
+        """Fetch and parse wiki.json. Returns an empty wiki when missing."""
+        content = self.get_file("wiki.json")
+        if content is None:
+            return {"apis": {}, "metadata": {}}
+        return json.loads(content)
 
     def list_files(self, prefix: str = "") -> list[str]:
         """List all object keys under the given prefix."""

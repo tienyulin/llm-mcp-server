@@ -11,6 +11,7 @@ Supports application-level cache invalidation for multi-source wiki updates.
 import logging
 import time
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -26,15 +27,23 @@ logger = logging.getLogger(__name__)
 # In-Memory Cache Management
 # ============================================================================
 
-class WikiCache:
-    """Simple in-memory cache for wiki data with TTL support."""
+_WIKI_CACHE_KEY = "wiki"
 
-    def __init__(self, ttl_seconds: int = 3600):
+
+class WikiCache:
+    """Simple in-memory cache for wiki data with TTL support.
+
+    Keys are colon-separated segments (e.g. "wiki", "wiki:app-inventory") so
+    that per-app invalidation can match a segment exactly instead of doing
+    substring matching ("app-1" must not invalidate "app-10").
+    """
+
+    def __init__(self, ttl_seconds: float = 3600):
         self.ttl = ttl_seconds
         self._cache: dict = {}
         self._timestamps: dict = {}
 
-    def get(self, key: str) -> any:
+    def get(self, key: str) -> Any:
         """Get value if not expired."""
         if key not in self._cache:
             return None
@@ -44,18 +53,21 @@ class WikiCache:
             return None
         return self._cache[key]
 
-    def set(self, key: str, value: any):
+    def set(self, key: str, value: Any):
         """Set value with current timestamp."""
         self._cache[key] = value
         self._timestamps[key] = time.time()
 
-    def invalidate_by_source(self, source_app: str = None):
-        """Invalidate cache entries related to a source app."""
+    def invalidate_by_source(self, source_app: Optional[str] = None):
+        """Invalidate cache entries related to a source app.
+
+        The shared "wiki" entry aggregates every app's data, so it is dropped
+        on any app-specific invalidation as well.
+        """
         if source_app:
-            # Invalidate app-specific entries
             keys_to_delete = [
                 k for k in self._cache.keys()
-                if source_app in str(k)
+                if k == _WIKI_CACHE_KEY or source_app in str(k).split(":")
             ]
             for k in keys_to_delete:
                 del self._cache[k]
@@ -101,7 +113,7 @@ class ApiDetailResponse(BaseModel):
 
 
 class CacheInvalidateRequest(BaseModel):
-    source_app: str = None  # e.g., "app-inventory". If None, clears all.
+    source_app: Optional[str] = None  # e.g., "app-inventory". If None, clears all.
 
 
 class CacheInvalidateResponse(BaseModel):
@@ -139,6 +151,15 @@ app = FastAPI(
 # Routes (all async for concurrent handling)
 # ============================================================================
 
+def _get_wiki() -> dict:
+    """Fetch the wiki through the TTL cache; invalidated via /cache/invalidate."""
+    wiki = wiki_cache.get(_WIKI_CACHE_KEY)
+    if wiki is None:
+        wiki = wiki_reader.get_wiki()
+        wiki_cache.set(_WIKI_CACHE_KEY, wiki)
+    return wiki
+
+
 @app.get("/health")
 async def health():
     """Health check."""
@@ -157,7 +178,7 @@ async def list_apis(module: str = ""):
         Dict mapping module names to list of API keys
     """
     service = WikiService(wiki_reader)
-    result = service.list_apis(module)
+    result = service.list_apis(module, wiki=_get_wiki())
 
     if not result:
         msg = f"No APIs found for module '{module}'" if module.strip() else "Wiki is empty"
@@ -181,7 +202,7 @@ async def search_apis(query: str):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     service = WikiService(wiki_reader)
-    results = service.search_apis(query)
+    results = service.search_apis(query, wiki=_get_wiki())
 
     return {"results": results, "count": len(results)}
 
@@ -199,7 +220,7 @@ async def get_api_detail(module: str, api_key: str):
         Full API details or 404 if not found
     """
     service = WikiService(wiki_reader)
-    detail = service.get_api_detail(module, api_key)
+    detail = service.get_api_detail(module, api_key, wiki=_get_wiki())
 
     if detail is None:
         raise HTTPException(
@@ -213,8 +234,7 @@ async def get_api_detail(module: str, api_key: str):
 @app.get("/wiki_info")
 async def wiki_info():
     """Get wiki statistics."""
-    service = WikiService(wiki_reader)
-    wiki = wiki_reader.get_wiki()
+    wiki = _get_wiki()
 
     total_endpoints = sum(len(apis) for apis in wiki.get("apis", {}).values())
     total_modules = len(wiki.get("apis", {}))
