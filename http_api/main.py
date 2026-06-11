@@ -18,8 +18,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from http_api.rate_limit import TokenBucketRateLimiter
+from services.embeddings import query_embedder_from_env
 from services.wiki_service import WikiService
 from storage.minio_client import MinioReader
+from storage.pg_reader import pg_reader_from_env
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -129,15 +131,31 @@ class CacheInvalidateResponse(BaseModel):
 # ============================================================================
 
 wiki_reader = None
+pg_reader = None
+query_embedder = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize MinioReader on startup."""
-    global wiki_reader
+    """Initialize MinioReader (and the optional PG reader) on startup."""
+    global wiki_reader, pg_reader, query_embedder
     wiki_reader = MinioReader()
+    pg_reader = pg_reader_from_env()
+    query_embedder = query_embedder_from_env()
+    if pg_reader is None:
+        logger.warning(
+            "PG_DSN not set — reads served from wiki.json only (no semantic search)"
+        )
+    else:
+        await pg_reader.aopen()
+        logger.info(
+            f"PG reader enabled (semantic search: "
+            f"{'on' if query_embedder else 'off — embeddings not configured'})"
+        )
     logger.info("MCP HTTP Server started")
     yield
+    if pg_reader is not None:
+        await pg_reader.aclose()
     logger.info("MCP HTTP Server shutdown")
 
 
@@ -166,6 +184,20 @@ async def _get_wiki() -> dict:
     return wiki
 
 
+def _pg():
+    """The PG reader when it is configured and not in failure cooldown.
+
+    PG is an optional accelerator: every endpoint that uses it falls back to
+    the cached-wiki path on any error or empty result, so an unconfigured,
+    down, or not-yet-indexed PG degrades to exactly the pre-PG behavior.
+    The processor syncs PG before POSTing /cache/invalidate, so when the
+    fallback cache is dropped PG is already fresh — reads never go backward.
+    """
+    if pg_reader is None or pg_reader.in_cooldown():
+        return None
+    return pg_reader
+
+
 @app.get("/health")
 async def health():
     """Health check."""
@@ -183,8 +215,17 @@ async def list_apis(module: str = ""):
     Returns:
         Dict mapping module names to list of API keys
     """
-    service = WikiService(wiki_reader)
-    result = service.list_apis(module, wiki=await _get_wiki())
+    result = None
+    pg = _pg()
+    if pg is not None:
+        try:
+            result = await pg.list_apis(module) or None
+        except Exception:
+            result = None  # breaker tripped inside the reader; use fallback
+
+    if result is None:
+        service = WikiService(wiki_reader)
+        result = service.list_apis(module, wiki=await _get_wiki())
 
     if not result:
         msg = f"No APIs found for module '{module}'" if module.strip() else "Wiki is empty"
@@ -207,10 +248,50 @@ async def search_apis(query: str):
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
+    pg = _pg()
+    if pg is not None:
+        try:
+            results = await pg.keyword_search(query)
+            if results:
+                return {"results": results, "count": len(results), "mode": "pg_keyword"}
+        except Exception:
+            pass  # breaker tripped inside the reader; use fallback
+
     service = WikiService(wiki_reader)
     results = service.search_apis(query, wiki=await _get_wiki())
 
-    return {"results": results, "count": len(results)}
+    return {"results": results, "count": len(results), "mode": "wiki_scan"}
+
+
+@app.get("/semantic_search")
+async def semantic_search(query: str, top_k: int = 10):
+    """
+    Semantic (vector) search over API entries.
+
+    Requires the PG+pgvector index and a configured embeddings provider.
+    Degrades to keyword search (mode=keyword_fallback) instead of erroring
+    when either is unavailable — a degraded-but-answerable query never 5xxs.
+
+    Returns:
+        Matching entries with a cosine-similarity score (semantic mode only).
+    """
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    top_k = max(1, min(top_k, 50))
+
+    pg = _pg()
+    if pg is not None and query_embedder is not None:
+        try:
+            qvec = await query_embedder.aembed_query(query)
+            results = await pg.semantic_search(qvec, top_k)
+            if results:
+                return {"results": results, "count": len(results), "mode": "semantic"}
+        except Exception as e:
+            logger.warning(f"Semantic search failed, falling back to keyword: {e}")
+
+    service = WikiService(wiki_reader)
+    results = service.search_apis(query, wiki=await _get_wiki())[:top_k]
+    return {"results": results, "count": len(results), "mode": "keyword_fallback"}
 
 
 @app.get("/get_api_detail")
@@ -225,8 +306,17 @@ async def get_api_detail(module: str, api_key: str):
     Returns:
         Full API details or 404 if not found
     """
-    service = WikiService(wiki_reader)
-    detail = service.get_api_detail(module, api_key, wiki=await _get_wiki())
+    detail = None
+    pg = _pg()
+    if pg is not None:
+        try:
+            detail = await pg.get_api_detail(module, api_key)
+        except Exception:
+            detail = None  # breaker tripped inside the reader; use fallback
+
+    if detail is None:
+        service = WikiService(wiki_reader)
+        detail = service.get_api_detail(module, api_key, wiki=await _get_wiki())
 
     if detail is None:
         raise HTTPException(
@@ -245,10 +335,24 @@ async def wiki_info():
     total_endpoints = sum(len(apis) for apis in wiki.get("apis", {}).values())
     total_modules = len(wiki.get("apis", {}))
 
+    vector_index = {"available": False}
+    pg = _pg()
+    if pg is not None:
+        try:
+            stats = await pg.stats()
+            vector_index = {
+                "available": True,
+                "semantic_search": query_embedder is not None,
+                **stats,
+            }
+        except Exception:
+            vector_index = {"available": False}
+
     return {
         "modules": total_modules,
         "total_endpoints": total_endpoints,
         "metadata": wiki.get("metadata", {}),
+        "vector_index": vector_index,
     }
 
 
