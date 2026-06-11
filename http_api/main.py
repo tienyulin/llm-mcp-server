@@ -8,6 +8,7 @@ Designed for team use with multiple concurrent users.
 Supports application-level cache invalidation for multi-source wiki updates.
 """
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from http_api.rate_limit import TokenBucketRateLimiter
 from services.wiki_service import WikiService
 from storage.minio_client import MinioReader
 
@@ -145,17 +147,21 @@ app = FastAPI(
     description="Team-friendly API for wiki queries",
     lifespan=lifespan,
 )
+app.add_middleware(TokenBucketRateLimiter)  # no-op unless RATE_LIMIT_RPS > 0
 
 
 # ============================================================================
 # Routes (all async for concurrent handling)
 # ============================================================================
 
-def _get_wiki() -> dict:
-    """Fetch the wiki through the TTL cache; invalidated via /cache/invalidate."""
+async def _get_wiki() -> dict:
+    """Fetch the wiki through the TTL cache; invalidated via /cache/invalidate.
+
+    The MinIO read runs in a worker thread — minio-py is synchronous and
+    would otherwise block the event loop."""
     wiki = wiki_cache.get(_WIKI_CACHE_KEY)
     if wiki is None:
-        wiki = wiki_reader.get_wiki()
+        wiki = await asyncio.to_thread(wiki_reader.get_wiki)
         wiki_cache.set(_WIKI_CACHE_KEY, wiki)
     return wiki
 
@@ -178,7 +184,7 @@ async def list_apis(module: str = ""):
         Dict mapping module names to list of API keys
     """
     service = WikiService(wiki_reader)
-    result = service.list_apis(module, wiki=_get_wiki())
+    result = service.list_apis(module, wiki=await _get_wiki())
 
     if not result:
         msg = f"No APIs found for module '{module}'" if module.strip() else "Wiki is empty"
@@ -202,7 +208,7 @@ async def search_apis(query: str):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     service = WikiService(wiki_reader)
-    results = service.search_apis(query, wiki=_get_wiki())
+    results = service.search_apis(query, wiki=await _get_wiki())
 
     return {"results": results, "count": len(results)}
 
@@ -220,7 +226,7 @@ async def get_api_detail(module: str, api_key: str):
         Full API details or 404 if not found
     """
     service = WikiService(wiki_reader)
-    detail = service.get_api_detail(module, api_key, wiki=_get_wiki())
+    detail = service.get_api_detail(module, api_key, wiki=await _get_wiki())
 
     if detail is None:
         raise HTTPException(
@@ -234,7 +240,7 @@ async def get_api_detail(module: str, api_key: str):
 @app.get("/wiki_info")
 async def wiki_info():
     """Get wiki statistics."""
-    wiki = _get_wiki()
+    wiki = await _get_wiki()
 
     total_endpoints = sum(len(apis) for apis in wiki.get("apis", {}).values())
     total_modules = len(wiki.get("apis", {}))
