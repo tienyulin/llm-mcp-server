@@ -6,6 +6,6 @@ pattern as wiki-processor/tests/conftest.py.
 """
 from unittest.mock import MagicMock
 
-import storage.minio_client as _minio_client
+import repository.minio_client as _minio_client
 
 _minio_client.Minio = MagicMock()

@@ -1,7 +1,7 @@
 """Tests for WikiCache invalidation semantics."""
 import time
 
-from http_api.main import WikiCache
+from core.cache import WikiCache
 
 
 def test_invalidate_exact_segment_match():

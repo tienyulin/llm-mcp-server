@@ -6,7 +6,7 @@ import logging
 
 import yaml
 
-from storage.minio_client import MinioReader
+from repository.minio_client import MinioReader
 
 logger = logging.getLogger(__name__)
 

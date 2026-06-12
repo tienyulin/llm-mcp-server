@@ -2,7 +2,7 @@
 
 Mirrors the MinioStorage/MinioReader split: the processor owns writes
 (wiki-processor/storage/pg_store.py), this side only queries. Every public
-method may raise — callers in http_api/main.py wrap each call and fall back
+method may raise — callers (services/query_service.py) wrap each call and fall back
 to the cached-wiki path, so a PG outage degrades silently to today's
 behavior. A small circuit breaker (PG_RETRY_SECONDS cooldown) keeps a dead
 PG from adding a connection-timeout to every request.

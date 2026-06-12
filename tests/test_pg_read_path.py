@@ -11,9 +11,10 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-import http_api.main as main
-from http_api.main import app, wiki_cache
-from storage.pg_reader import PGReader
+from http_api.main import app
+from repository.pg_reader import PGReader
+
+wiki_cache = app.state.wiki_cache
 
 _FAKE_WIKI = {
     "apis": {
@@ -70,24 +71,24 @@ class StubReader:
 
 @contextmanager
 def _client(reader, embedder="mock", wiki=_FAKE_WIKI):
-    """TestClient with the module globals patched after lifespan startup."""
+    """TestClient with app.state patched after lifespan startup."""
     with TestClient(app) as client:
         try:
-            main.pg_reader = reader
+            app.state.pg_reader = reader
             if embedder == "mock":
                 os.environ["MOCK_EMBEDDINGS"] = "true"
                 from services.embeddings import QueryEmbedder
-                main.query_embedder = QueryEmbedder()
+                app.state.query_embedder = QueryEmbedder()
             else:
-                main.query_embedder = embedder
+                app.state.query_embedder = embedder
             wiki_cache.clear()
             wiki_cache.set("wiki", wiki)
             yield client
         finally:
-            # Reset module globals before lifespan shutdown so the stub never
+            # Reset app.state before lifespan shutdown so the stub never
             # leaks into other test modules (and aclose isn't called on it).
-            main.pg_reader = None
-            main.query_embedder = None
+            app.state.pg_reader = None
+            app.state.query_embedder = None
             wiki_cache.clear()
 
 

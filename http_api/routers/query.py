@@ -1,0 +1,95 @@
+"""Read endpoints. HTTP concerns only — fallback logic lives in QueryService."""
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from http_api.deps import get_query_service
+from services.query_service import QueryService
+
+router = APIRouter()
+
+
+@router.get("/list_apis")
+async def list_apis(module: str = "", svc: QueryService = Depends(get_query_service)):
+    """
+    List all API endpoints.
+
+    Args:
+        module: Optional module name to filter
+
+    Returns:
+        Dict mapping module names to list of API keys
+    """
+    result = await svc.list_apis(module)
+    if not result:
+        msg = f"No APIs found for module '{module}'" if module.strip() else "Wiki is empty"
+        raise HTTPException(status_code=404, detail=msg)
+    return {"modules": result}
+
+
+@router.get("/search_apis")
+async def search_apis(query: str, svc: QueryService = Depends(get_query_service)):
+    """
+    Search API endpoints by keyword.
+
+    Args:
+        query: Search keyword (searches path, description, parameters)
+
+    Returns:
+        List of matching API records
+    """
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    results, mode = await svc.search_apis(query)
+    return {"results": results, "count": len(results), "mode": mode}
+
+
+@router.get("/semantic_search")
+async def semantic_search(
+    query: str, top_k: int = 10, svc: QueryService = Depends(get_query_service)
+):
+    """
+    Semantic (vector) search over API entries.
+
+    Requires the PG+pgvector index and a configured embeddings provider.
+    Degrades to keyword search (mode=keyword_fallback) instead of erroring
+    when either is unavailable — a degraded-but-answerable query never 5xxs.
+
+    Returns:
+        Matching entries with a cosine-similarity score (semantic mode only).
+    """
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    top_k = max(1, min(top_k, 50))
+
+    results, mode = await svc.semantic_search(query, top_k)
+    return {"results": results, "count": len(results), "mode": mode}
+
+
+@router.get("/get_api_detail")
+async def get_api_detail(
+    module: str, api_key: str, svc: QueryService = Depends(get_query_service)
+):
+    """
+    Get full details of a specific API endpoint.
+
+    Args:
+        module: Module name (e.g., 'inventory')
+        api_key: API key (e.g., 'GET /inventory/{id}')
+
+    Returns:
+        Full API details or 404 if not found
+    """
+    detail = await svc.get_api_detail(module, api_key)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"API '{api_key}' not found in module '{module}'",
+        )
+    return {"detail": detail}
+
+
+@router.get("/wiki_info")
+async def wiki_info(svc: QueryService = Depends(get_query_service)):
+    """Get wiki statistics."""
+    return await svc.wiki_info()
