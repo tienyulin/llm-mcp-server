@@ -50,6 +50,9 @@ class QueryEmbedder:
         self.dim = int(os.getenv("EMBEDDING_DIM", "1536"))
         self.timeout = float(os.getenv("EMBEDDING_TIMEOUT", "30"))
         self.mock_mode = os.getenv("MOCK_EMBEDDINGS", "false").lower() == "true"
+        # Query vectors must match the index vectors' dimension — send the same
+        # {"dimensions": dim} the processor sends (EMBEDDING_SEND_DIMENSIONS).
+        self.send_dimensions = os.getenv("EMBEDDING_SEND_DIMENSIONS", "false").lower() == "true"
 
     def is_enabled(self) -> bool:
         return self.mock_mode or bool(self.base_url)
@@ -61,11 +64,14 @@ class QueryEmbedder:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        body = {"model": self.model, "input": [text]}
+        if self.send_dimensions:
+            body["dimensions"] = self.dim
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}/v1/embeddings",
                 headers=headers,
-                json={"model": self.model, "input": [text]},
+                json=body,
             )
             response.raise_for_status()
             vec = response.json()["data"][0]["embedding"]
