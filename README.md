@@ -28,6 +28,13 @@ curl localhost:8002/health
 > mcp-server only **reads**. It returns empty until a `wiki-processor` populates
 > MinIO + PG. For data, run the full [platform stack](https://github.com/tienyulin/llm-wiki-mcp).
 
+## Develop in a Dev Container
+This repo ships a [`.devcontainer/`](.devcontainer/). In VS Code / Cursor:
+**Reopen in Container** — builds this service + its deps (minio, pg), mounts the
+source live at `/app`, isolated Python env (won't clash with the other services).
+Inside: `python -m pytest`, or `python http_api/main.py` (:8002). For data,
+populate via a running wiki-processor or the full platform.
+
 ## Query examples
 ```bash
 curl 'localhost:8002/list_apis'
