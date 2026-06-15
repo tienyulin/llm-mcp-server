@@ -1,0 +1,10 @@
+# Dev-container override for the standalone stack (docker-compose.yml).
+# Keeps the service container alive so VS Code can attach; the source is
+# bind-mounted live at /app by devcontainer.json. Deps (minio, pg) come from the
+# base compose. mcp-server only reads — run a wiki-processor (or the full
+# platform) to populate data.
+services:
+  mcp-server:
+    command: sleep infinity
+    environment:
+      MOCK_EMBEDDINGS: ${MOCK_EMBEDDINGS:-true}
