@@ -1,0 +1,82 @@
+# Standalone mcp-server stack: the query service + the stores it reads (MinIO,
+# Postgres/pgvector). Run from this directory:
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#   curl localhost:8002/health
+#
+# Note: mcp-server only READS. It returns empty results until a wiki-processor
+# populates MinIO + PG. To exercise it with data, run the full platform stack
+# (https://github.com/tienyulin/llm-wiki-mcp) or point it at shared stores.
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: mcp-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: minio server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks: [mcp-net]
+
+  pg:
+    image: pgvector/pgvector:pg16
+    container_name: mcp-pg
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${PG_USER:-wiki}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-wikipass}
+      POSTGRES_DB: ${PG_DATABASE:-wiki}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-wiki} -d ${PG_DATABASE:-wiki}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [mcp-net]
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    ports:
+      - "8002:8002"
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-wiki-data}
+      PG_DSN: ${PG_DSN:-postgresql://wiki:wikipass@pg:5432/wiki}
+      PG_RETRY_SECONDS: ${PG_RETRY_SECONDS:-30}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+      EMBEDDING_SEND_DIMENSIONS: ${EMBEDDING_SEND_DIMENSIONS:-false}
+      MOCK_EMBEDDINGS: ${MOCK_EMBEDDINGS:-true}
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [mcp-net]
+    command: python http_api/main.py
+
+volumes:
+  minio_data:
+  pg_data:
+
+networks:
+  mcp-net:
+    driver: bridge
