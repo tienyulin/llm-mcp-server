@@ -19,21 +19,27 @@ GET /search_apis · /semantic_search · /list_apis · /get_api_detail · /wiki_i
 - `repository/` — `minio_client.py` (reader), `pg_reader.py` (read-only, circuit-broken)
 - `core/` — config + DI
 
-## Quickstart (standalone)
+## Quickstart
+Uses the **shared infra** ([llm-wiki-infra](https://github.com/tienyulin/llm-wiki-infra))
+so it reads the same MinIO + Postgres that wiki-processor writes:
 ```bash
+# 1) shared infra (once)
+(cd ../llm-wiki-infra && docker compose up -d)
+# 2) this service
 cp .env.example .env
-docker compose up -d --build   # brings up minio + pg + mcp-server
+docker compose up -d --build
 curl localhost:8002/health
 ```
-> mcp-server only **reads**. It returns empty until a `wiki-processor` populates
-> MinIO + PG. For data, run the full [platform stack](https://github.com/tienyulin/llm-wiki-mcp).
+> mcp-server only **reads**. It returns empty until a `wiki-processor` (on the
+> same shared infra) populates MinIO + PG.
 
 ## Develop in a Dev Container
-This repo ships a [`.devcontainer/`](.devcontainer/). In VS Code / Cursor:
-**Reopen in Container** — builds this service + its deps (minio, pg), mounts the
-source live at `/app`, isolated Python env (won't clash with the other services).
-Inside: `python -m pytest`, or `python http_api/main.py` (:8002). For data,
-populate via a running wiki-processor or the full platform.
+This repo ships a [`.devcontainer/`](.devcontainer/). **Start the shared infra
+first** (`cd ../llm-wiki-infra && docker compose up -d`), then in VS Code /
+Cursor: **Reopen in Container** — builds this service, mounts source live at
+`/app`, isolated Python env, attached to the shared `llm-wiki-net`. Inside:
+`python -m pytest`, or `python http_api/main.py` (:8002). For data, run a
+wiki-processor on the same infra.
 
 ## Query examples
 ```bash
