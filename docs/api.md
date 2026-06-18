@@ -45,6 +45,20 @@ Edges: `shared_source` (4.0, endpoints sharing a source file), `concept` (3.0, c
 ## `GET /health`
 `{"status":"ok"}`
 
+## Native MCP — `POST /mcp/`
+A real [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable
+HTTP transport) mounted on the same app, so Claude / agents connect natively — no
+custom REST client. Stateless (`stateless_http=True`): horizontally scalable, no
+session affinity. Tools are thin wrappers over the same `QueryService` as REST:
+`search_apis`, `semantic_search`, `list_apis`, `get_api_detail`, `list_concepts`,
+`get_concept`, `get_overview`, `wiki_info`.
+
+Connect (Claude Code): `claude mcp add --transport http llm-wiki http://localhost:8002/mcp/`
+
+Production: set `MCP_ALLOWED_HOSTS` (comma-separated) to enable DNS-rebinding
+protection; unset = protection off (dev default). See
+[architecture/mcp-transport.md](architecture/mcp-transport.md) for the design rationale.
+
 How semantic search resolves (query → embed → pgvector cosine → rank), with a
 fully worked real example, is in the platform doc
 `docs/examples/real-semantic-walkthrough.md` and `docs/architecture/vector-search.md`.

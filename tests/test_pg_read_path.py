@@ -11,10 +11,8 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-from http_api.main import app
+from http_api.main import create_app
 from repository.pg_reader import PGReader
-
-wiki_cache = app.state.wiki_cache
 
 _FAKE_WIKI = {
     "apis": {
@@ -71,7 +69,9 @@ class StubReader:
 
 @contextmanager
 def _client(reader, embedder="mock", wiki=_FAKE_WIKI):
-    """TestClient with app.state patched after lifespan startup."""
+    """Fresh app per call (the mounted MCP session manager runs once per app
+    instance), with app.state patched after lifespan startup."""
+    app = create_app()
     with TestClient(app) as client:
         try:
             app.state.pg_reader = reader
@@ -81,15 +81,13 @@ def _client(reader, embedder="mock", wiki=_FAKE_WIKI):
                 app.state.query_embedder = QueryEmbedder()
             else:
                 app.state.query_embedder = embedder
-            wiki_cache.clear()
-            wiki_cache.set("wiki", wiki)
+            app.state.wiki_cache.clear()
+            app.state.wiki_cache.set("wiki", wiki)
             yield client
         finally:
-            # Reset app.state before lifespan shutdown so the stub never
-            # leaks into other test modules (and aclose isn't called on it).
+            # Null the stub before lifespan shutdown so aclose() isn't called on it.
             app.state.pg_reader = None
             app.state.query_embedder = None
-            wiki_cache.clear()
 
 
 def test_semantic_search_served_from_pg():
