@@ -61,6 +61,7 @@ python -m pytest            # hermetic (Minio SDK stubbed); real-PG tests auto-s
 ```
 
 ## Docs
+- [Architecture diagrams](docs/architecture/diagram.md) — layering + PG-first read path
 - [API reference](docs/api.md)
 - Cross-cutting (platform): `docs/architecture/vector-search.md`,
   `docs/examples/real-semantic-walkthrough.md`, `docs/architecture/service-layering.md`
