@@ -93,3 +93,39 @@ async def get_api_detail(
 async def wiki_info(svc: QueryService = Depends(get_query_service)):
     """Get wiki statistics."""
     return await svc.wiki_info()
+
+
+@router.get("/list_concepts")
+async def list_concepts(svc: QueryService = Depends(get_query_service)):
+    """Cross-app concepts (summary). Empty when concepts haven't been built."""
+    return {"concepts": await svc.list_concepts()}
+
+
+@router.get("/get_concept")
+async def get_concept(name: str, svc: QueryService = Depends(get_query_service)):
+    """Full concept record (description, related endpoints, apps)."""
+    concept = await svc.get_concept(name)
+    if concept is None:
+        raise HTTPException(status_code=404, detail=f"Concept '{name}' not found")
+    return {"concept": concept}
+
+
+@router.get("/get_overview")
+async def get_overview(app: str, svc: QueryService = Depends(get_query_service)):
+    """Per-app overview synthesized at ingest."""
+    overview = await svc.get_overview(app)
+    if overview is None:
+        raise HTTPException(status_code=404, detail=f"No overview for app '{app}'")
+    return {"overview": overview}
+
+
+@router.get("/skill")
+async def skill(name: str = "wiki-expert", svc: QueryService = Depends(get_query_service)):
+    """Package the wiki into an Anthropic Skill folder ({file_path: content})."""
+    return {"files": await svc.build_skill(name)}
+
+
+@router.get("/graph")
+async def graph(svc: QueryService = Depends(get_query_service)):
+    """Knowledge graph: endpoint + concept nodes with weighted edges."""
+    return await svc.build_graph()

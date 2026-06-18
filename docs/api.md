@@ -21,6 +21,24 @@ Vector similarity (cosine). Embeds the query, ranks `api_entries` by
 ## `GET /wiki_info`
 `{"modules":N,"total_endpoints":M,"vector_index":{available,semantic_search,entries,embedded,...}}`.
 
+## `GET /list_concepts`
+Cross-app concepts (built by wiki-processor's `/admin/rebuild-concepts`).
+`{"concepts":{"<name>":{description,apps:[...],related_count}}}` — empty until built.
+
+## `GET /get_concept?name=<name>`
+`{"concept":{description,related:["<module>::<api_key>", ...],apps:[...]}}` or 404.
+
+## `GET /get_overview?app=<app>`
+Per-app overview synthesized at ingest. `{"overview":{text,updated_at}}` or 404.
+
+## `GET /skill?name=<skill-name>`
+Packages the wiki into an Anthropic Skill folder.
+`{"files":{"<name>/SKILL.md":"...","<name>/references/concepts.md":"..."}}`.
+
+## `GET /graph`
+Knowledge graph. `{"nodes":[{id,type,module?}],"edges":[{source,target,weight,kind}]}`.
+Edges: `shared_source` (4.0, endpoints sharing a source file), `concept` (3.0, concept→endpoint).
+
 ## `POST /cache/invalidate`
 `{"source_app":"my-app"}` → drops cached entries for that app (called by wiki-processor after a write).
 

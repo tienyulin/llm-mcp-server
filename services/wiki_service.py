@@ -98,6 +98,112 @@ class WikiService:
         wiki = wiki if wiki is not None else self._minio.get_wiki()
         return wiki.get("apis", {}).get(module, {}).get(api_key)
 
+    # ------------------------------------------------------------------
+    # Concepts (item 2), overviews (item 5), skill (item 4), graph (item 7).
+    # All pure over a wiki dict — fed the cached wiki by QueryService.
+    # ------------------------------------------------------------------
+
+    def list_concepts(self, wiki: dict) -> dict[str, dict]:
+        """{concept: {description, apps, related_count}} — summary view."""
+        out = {}
+        for name, c in wiki.get("concepts", {}).items():
+            if not isinstance(c, dict):
+                continue
+            out[name] = {
+                "description": c.get("description", ""),
+                "apps": c.get("apps", []),
+                "related_count": len(c.get("related", [])),
+            }
+        return out
+
+    def get_concept(self, name: str, wiki: dict) -> dict | None:
+        """Full concept record (description, related, apps) or None."""
+        c = wiki.get("concepts", {}).get(name)
+        return c if isinstance(c, dict) else None
+
+    def get_overview(self, app: str, wiki: dict) -> dict | None:
+        """Per-app overview record {text, updated_at} or None."""
+        o = wiki.get("overviews", {}).get(app)
+        return o if isinstance(o, dict) else None
+
+    def build_skill(self, wiki: dict, name: str = "wiki-expert") -> dict:
+        """Package the wiki into an Anthropic Skill folder (item 4).
+
+        Deterministic templating from wiki data — no LLM. Returns
+        {file_path: content}; the caller writes or zips it.
+        """
+        apis = wiki.get("apis", {})
+        concepts = wiki.get("concepts", {})
+        total = sum(len(e) for e in apis.values() if isinstance(e, dict))
+        modules = sorted(apis)
+
+        front = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: Answers questions about {total} API endpoint(s) across "
+            f"{len(modules)} service(s): {', '.join(modules) or 'none'}. Use when a "
+            "question concerns these services' APIs.\n"
+            "---\n\n"
+        )
+        body = [f"# {name}\n", "## Services\n"]
+        for module in modules:
+            body.append(f"### {module}")
+            for api_key, detail in sorted(apis[module].items()):
+                desc = detail.get("description", "") if isinstance(detail, dict) else ""
+                body.append(f"- `{api_key}` — {desc}")
+            body.append("")
+        files = {f"{name}/SKILL.md": front + "\n".join(body)}
+
+        if concepts:
+            ref = ["# Cross-cutting concepts\n"]
+            for cname, c in sorted(concepts.items()):
+                if not isinstance(c, dict):
+                    continue
+                ref.append(f"## {cname}")
+                ref.append(c.get("description", ""))
+                for r in c.get("related", []):
+                    ref.append(f"- {r}")
+                ref.append("")
+            files[f"{name}/references/concepts.md"] = "\n".join(ref)
+        return files
+
+    def build_graph(self, wiki: dict) -> dict:
+        """Knowledge graph: API + concept nodes, weighted edges (item 7).
+
+        Edges: concept→endpoint membership (weight 3.0, the 'direct link'
+        signal) and endpoint↔endpoint shared-source overlap (weight 4.0).
+        # ponytail: shared-source + concept membership only; add Adamic-Adar
+        # (1.5) and Louvain communities if the graph needs richer clustering.
+        """
+        apis = wiki.get("apis", {})
+        nodes, edges = [], []
+        by_source: dict[str, list[str]] = {}
+
+        for module, endpoints in apis.items():
+            if not isinstance(endpoints, dict):
+                continue
+            for api_key, detail in endpoints.items():
+                nid = f"{module}::{api_key}"
+                nodes.append({"id": nid, "type": "endpoint", "module": module})
+                for src in (detail.get("sources", []) if isinstance(detail, dict) else []):
+                    by_source.setdefault(src, []).append(nid)
+
+        for src, members in by_source.items():
+            for i in range(len(members)):
+                for j in range(i + 1, len(members)):
+                    edges.append({"source": members[i], "target": members[j],
+                                  "weight": 4.0, "kind": "shared_source", "via": src})
+
+        for cname, c in wiki.get("concepts", {}).items():
+            if not isinstance(c, dict):
+                continue
+            cid = f"concept::{cname}"
+            nodes.append({"id": cid, "type": "concept"})
+            for r in c.get("related", []):
+                edges.append({"source": cid, "target": r, "weight": 3.0, "kind": "concept"})
+
+        return {"nodes": nodes, "edges": edges}
+
     def parse_frontmatter(self, markdown: str) -> tuple[dict, str]:
         """Parse YAML frontmatter from markdown. Returns (frontmatter_dict, body)."""
         if not markdown.startswith("---"):
