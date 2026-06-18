@@ -13,6 +13,8 @@ deployable on its own.
 ```
 GET /search_apis · /semantic_search · /list_apis · /get_api_detail · /wiki_info
         └─> PG/pgvector (fast path)  ──fallback──>  MinIO wiki.json
+GET /list_concepts · /get_concept · /get_overview · /skill · /graph
+        └─> MinIO wiki.json (concepts/overviews built by wiki-processor)
 ```
 - `http_api/` — FastAPI app + routers (query, cache, health) + rate limiting
 - `services/` — query service, wiki service, embeddings (query side), cache

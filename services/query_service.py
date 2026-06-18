@@ -101,6 +101,21 @@ class QueryService:
             )
         return detail
 
+    async def list_concepts(self) -> dict:
+        return self._wiki_service.list_concepts(await self._get_wiki())
+
+    async def get_concept(self, name: str) -> Optional[dict]:
+        return self._wiki_service.get_concept(name, await self._get_wiki())
+
+    async def get_overview(self, app: str) -> Optional[dict]:
+        return self._wiki_service.get_overview(app, await self._get_wiki())
+
+    async def build_skill(self, name: str) -> dict:
+        return self._wiki_service.build_skill(await self._get_wiki(), name)
+
+    async def build_graph(self) -> dict:
+        return self._wiki_service.build_graph(await self._get_wiki())
+
     async def wiki_info(self) -> dict:
         wiki = await self._get_wiki()
 
