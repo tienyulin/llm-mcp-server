@@ -167,6 +167,42 @@ class WikiService:
             files[f"{name}/references/concepts.md"] = "\n".join(ref)
         return files
 
+    # ---- Knowledge documents (prose/reference, not API specs) ----
+
+    def list_knowledge(self, wiki: dict) -> dict[str, dict]:
+        """{doc_id: {title, source_app, topics}} — summary view."""
+        out = {}
+        for doc_id, e in wiki.get("knowledge", {}).items():
+            if not isinstance(e, dict):
+                continue
+            out[doc_id] = {"title": e.get("title", doc_id),
+                           "source_app": e.get("source_app", ""),
+                           "topics": e.get("topics", [])}
+        return out
+
+    def get_knowledge(self, doc_id: str, wiki: dict) -> dict | None:
+        """Full knowledge entry (title, summary, topics, key_points, provenance)."""
+        e = wiki.get("knowledge", {}).get(doc_id)
+        return e if isinstance(e, dict) else None
+
+    def search_knowledge(self, query: str, wiki: dict) -> list[dict]:
+        """Keyword search across knowledge docs (title/summary/topics/key_points).
+        Returns {doc_id, title, summary, source_app} for matches."""
+        q = query.strip().lower()
+        results = []
+        for doc_id, e in wiki.get("knowledge", {}).items():
+            if not isinstance(e, dict):
+                continue
+            hay = " ".join([
+                doc_id, e.get("title", ""), e.get("summary", ""),
+                " ".join(e.get("topics", [])), " ".join(e.get("key_points", [])),
+            ]).lower()
+            if q in hay:
+                results.append({"doc_id": doc_id, "title": e.get("title", doc_id),
+                                "summary": e.get("summary", ""),
+                                "source_app": e.get("source_app", "")})
+        return results
+
     def build_graph(self, wiki: dict) -> dict:
         """Knowledge graph: API + concept nodes, weighted edges (item 7).
 
