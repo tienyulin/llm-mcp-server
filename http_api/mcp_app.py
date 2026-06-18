@@ -103,4 +103,32 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Wiki statistics: module/endpoint counts and vector-index status."""
         return json.dumps(await get_query_service().wiki_info(), ensure_ascii=False)
 
+    @mcp.tool()
+    async def search_knowledge(query: str) -> str:
+        """Search ingested KNOWLEDGE documents (Oracle, FastAPI how-tos, reference
+        material — not API specs) by keyword. Use this for conceptual/how-to
+        questions ('how do I…', 'what is…', 'how to recover from data loss').
+        Returns {doc_id, title, summary, source_app} matches."""
+        results = await get_query_service().search_knowledge(query)
+        return json.dumps({"results": results}, ensure_ascii=False)
+
+    @mcp.tool()
+    async def get_knowledge(doc_id: str) -> str:
+        """Full knowledge document: title, summary, topics, key_points, provenance."""
+        entry = await get_query_service().get_knowledge(doc_id)
+        return json.dumps(entry, ensure_ascii=False) if entry else f"No knowledge doc: {doc_id}"
+
+    @mcp.tool()
+    async def list_knowledge() -> str:
+        """List ingested knowledge documents ({doc_id: {title, source_app, topics}})."""
+        return json.dumps(await get_query_service().list_knowledge(), ensure_ascii=False)
+
+    # Knowledge docs are read-only reference material → also exposed as MCP
+    # *resources* (idiomatic: resources = what the client can read, tools = what
+    # it can do). Clients that support resources can pull a doc directly as context.
+    @mcp.resource("knowledge://{doc_id}")
+    async def knowledge_resource(doc_id: str) -> str:
+        entry = await get_query_service().get_knowledge(doc_id)
+        return json.dumps(entry, ensure_ascii=False) if entry else f"No knowledge doc: {doc_id}"
+
     return mcp

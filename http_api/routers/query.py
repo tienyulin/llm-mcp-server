@@ -119,6 +119,30 @@ async def get_overview(app: str, svc: QueryService = Depends(get_query_service))
     return {"overview": overview}
 
 
+@router.get("/list_knowledge")
+async def list_knowledge(svc: QueryService = Depends(get_query_service)):
+    """Knowledge documents (prose/reference) ingested into the wiki."""
+    return {"knowledge": await svc.list_knowledge()}
+
+
+@router.get("/get_knowledge")
+async def get_knowledge(doc_id: str, svc: QueryService = Depends(get_query_service)):
+    """Full knowledge entry (title, summary, topics, key_points, provenance)."""
+    entry = await svc.get_knowledge(doc_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge doc '{doc_id}' not found")
+    return {"knowledge": entry}
+
+
+@router.get("/search_knowledge")
+async def search_knowledge(query: str, svc: QueryService = Depends(get_query_service)):
+    """Keyword search across knowledge docs (title/summary/topics/key_points)."""
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    results = await svc.search_knowledge(query)
+    return {"results": results, "count": len(results)}
+
+
 @router.get("/skill")
 async def skill(name: str = "wiki-expert", svc: QueryService = Depends(get_query_service)):
     """Package the wiki into an Anthropic Skill folder ({file_path: content})."""

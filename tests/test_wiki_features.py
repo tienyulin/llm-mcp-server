@@ -38,6 +38,13 @@ WIKI = {
     "overviews": {
         "flashback-api": {"text": "flashback-api: 2 endpoints.", "updated_at": "2026-06-18T00:00:00"},
     },
+    "knowledge": {
+        "oracle-kb:oracle-flashback": {
+            "title": "Oracle Flashback", "source_app": "oracle-kb",
+            "summary": "Oracle Flashback recovers data after accidental data loss.",
+            "topics": ["Flashback Table"], "key_points": ["Recovers dropped rows"],
+            "sources": ["oracle-flashback.md"], "source_version": "v1"},
+    },
 }
 
 
@@ -71,6 +78,24 @@ def test_build_skill_no_concepts(service):
     files = service.build_skill({"apis": {"a": {"GET /x": {"description": "d"}}}})
     assert any(p.endswith("SKILL.md") for p in files)
     assert not any("references" in p for p in files)
+
+
+def test_list_knowledge(service):
+    out = service.list_knowledge(WIKI)
+    assert "oracle-kb:oracle-flashback" in out
+    assert out["oracle-kb:oracle-flashback"]["source_app"] == "oracle-kb"
+
+
+def test_get_knowledge(service):
+    assert service.get_knowledge("oracle-kb:oracle-flashback", WIKI)["title"] == "Oracle Flashback"
+    assert service.get_knowledge("nope", WIKI) is None
+
+
+def test_search_knowledge_finds_data_loss(service):
+    # 'data loss' appears in the summary → the Oracle doc is retrievable by it.
+    hits = service.search_knowledge("data loss", WIKI)
+    assert any(h["doc_id"] == "oracle-kb:oracle-flashback" for h in hits)
+    assert service.search_knowledge("kubernetes", WIKI) == []
 
 
 def test_build_graph_nodes_and_edges(service):

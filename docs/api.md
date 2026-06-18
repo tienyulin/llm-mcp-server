@@ -45,13 +45,22 @@ Edges: `shared_source` (4.0, endpoints sharing a source file), `concept` (3.0, c
 ## `GET /health`
 `{"status":"ok"}`
 
+## Knowledge documents (prose/reference, not API specs)
+Served from `wiki.knowledge` (built by wiki-processor from `knowledge` docs).
+
+- `GET /list_knowledge` → `{knowledge: {doc_id: {title, source_app, topics}}}`
+- `GET /get_knowledge?doc_id=` → `{knowledge: {title, summary, topics, key_points, ...}}` or 404
+- `GET /search_knowledge?query=` → `{results: [{doc_id, title, summary, source_app}], count}`
+
 ## Native MCP — `POST /mcp/`
 A real [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable
 HTTP transport) mounted on the same app, so Claude / agents connect natively — no
 custom REST client. Stateless (`stateless_http=True`): horizontally scalable, no
 session affinity. Tools are thin wrappers over the same `QueryService` as REST:
 `search_apis`, `semantic_search`, `list_apis`, `get_api_detail`, `list_concepts`,
-`get_concept`, `get_overview`, `wiki_info`.
+`get_concept`, `get_overview`, `wiki_info`, `search_knowledge`, `get_knowledge`,
+`list_knowledge`. Knowledge docs are also exposed as MCP **resources**
+(`knowledge://{doc_id}`) — idiomatic read-only context.
 
 Connect (Claude Code): `claude mcp add --transport http llm-wiki http://localhost:8002/mcp/`
 

@@ -110,6 +110,15 @@ class QueryService:
     async def get_overview(self, app: str) -> Optional[dict]:
         return self._wiki_service.get_overview(app, await self._get_wiki())
 
+    async def list_knowledge(self) -> dict:
+        return self._wiki_service.list_knowledge(await self._get_wiki())
+
+    async def get_knowledge(self, doc_id: str):
+        return self._wiki_service.get_knowledge(doc_id, await self._get_wiki())
+
+    async def search_knowledge(self, query: str) -> list:
+        return self._wiki_service.search_knowledge(query, await self._get_wiki())
+
     async def build_skill(self, name: str) -> dict:
         return self._wiki_service.build_skill(await self._get_wiki(), name)
 

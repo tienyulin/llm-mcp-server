@@ -14,7 +14,8 @@ deployable on its own.
 REST: GET /search_apis · /semantic_search · /list_apis · /get_api_detail · /wiki_info
             └─> PG/pgvector (fast path)  ──fallback──>  MinIO wiki.json
       GET /list_concepts · /get_concept · /get_overview · /skill · /graph
-            └─> MinIO wiki.json (concepts/overviews built by wiki-processor)
+      GET /list_knowledge · /get_knowledge · /search_knowledge
+            └─> MinIO wiki.json (concepts/overviews/knowledge built by wiki-processor)
 MCP:  POST /mcp/  (Streamable HTTP, stateless) — same QueryService as REST,
             exposed as MCP tools so Claude/agents connect natively
 ```
