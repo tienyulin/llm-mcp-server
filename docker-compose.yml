@@ -29,6 +29,8 @@ services:
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
       EMBEDDING_SEND_DIMENSIONS: ${EMBEDDING_SEND_DIMENSIONS:-false}
       MOCK_EMBEDDINGS: ${MOCK_EMBEDDINGS:-true}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
     networks: [llm-wiki-net]
     command: python http_api/main.py
 

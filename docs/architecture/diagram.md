@@ -10,6 +10,7 @@ Every read is PG-first with cached-wiki fallback.
 flowchart TD
     subgraph http["http_api/ (FastAPI)"]
         QR["routers/query.py<br/>list_apis · search_apis · semantic_search<br/>get_api_detail · wiki_info<br/>list_concepts · get_concept · get_overview · skill · graph"]
+        MCPA["mcp_app.py<br/>native MCP server (Streamable HTTP)<br/>mounted at /mcp/ — same tools, stateless"]
         CR["routers/cache.py<br/>POST /cache/invalidate"]
         HR["routers/health.py"]
         RL["rate_limit.py (token bucket)"]
@@ -21,6 +22,7 @@ flowchart TD
     MIN["repository/minio_client.py<br/>MinioReader → wiki.json"]
 
     QR --> QS
+    MCPA --> QS
     CR --> CACHE
     QS --> CACHE
     QS --> PGR

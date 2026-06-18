@@ -11,11 +11,14 @@ deployable on its own.
 
 ## Architecture
 ```
-GET /search_apis · /semantic_search · /list_apis · /get_api_detail · /wiki_info
-        └─> PG/pgvector (fast path)  ──fallback──>  MinIO wiki.json
-GET /list_concepts · /get_concept · /get_overview · /skill · /graph
-        └─> MinIO wiki.json (concepts/overviews built by wiki-processor)
+REST: GET /search_apis · /semantic_search · /list_apis · /get_api_detail · /wiki_info
+            └─> PG/pgvector (fast path)  ──fallback──>  MinIO wiki.json
+      GET /list_concepts · /get_concept · /get_overview · /skill · /graph
+            └─> MinIO wiki.json (concepts/overviews built by wiki-processor)
+MCP:  POST /mcp/  (Streamable HTTP, stateless) — same QueryService as REST,
+            exposed as MCP tools so Claude/agents connect natively
 ```
+Add to Claude Code: `claude mcp add --transport http llm-wiki http://localhost:8002/mcp/`
 - `http_api/` — FastAPI app + routers (query, cache, health) + rate limiting
 - `services/` — query service, wiki service, embeddings (query side), cache
 - `repository/` — `minio_client.py` (reader), `pg_reader.py` (read-only, circuit-broken)
