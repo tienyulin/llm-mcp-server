@@ -93,6 +93,54 @@ class PGReader:
             for m, k, d, s, score in rows
         ]
 
+    async def hybrid_search_apis(
+        self, query_vec: list[float], query_text: str, top_k: int = 10,
+        rrf_k: int = 60, min_cosine: float = 0.5,
+    ) -> list[dict]:
+        """Hybrid retrieval over api_entries: vector ∪ trigram fused by RRF —
+        same recipe as knowledge, reusing the existing api_entries vector +
+        trigram indexes. Keyword alone missed paraphrased endpoint queries
+        ('undo deleted rows' vs a /recover endpoint); the vector arm catches
+        those, the keyword arm keeps exact path/identifier hits.
+
+        Vector arm gated by `min_cosine` so an unrelated query falls back to
+        keyword-only matches (which may be empty) rather than nearest-neighbour
+        noise."""
+        literal = _to_vector_literal(query_vec)
+        vec_rows = await self._fetch(
+            """
+            SELECT module, api_key, description, source_app
+            FROM api_entries
+            WHERE embedding IS NOT NULL
+              AND 1 - (embedding <=> %s::vector) >= %s
+            ORDER BY embedding <=> %s::vector
+            LIMIT 20
+            """,
+            (literal, min_cosine, literal),
+        )
+        kw_rows = await self._fetch(
+            """
+            SELECT module, api_key, description, source_app
+            FROM api_entries
+            WHERE embed_text ILIKE %s
+            LIMIT 20
+            """,
+            (f"%{query_text.strip()}%",),
+        )
+        scores: dict = {}
+        meta: dict = {}
+        for ranking in (vec_rows, kw_rows):
+            for rank, (module, api_key, desc, src) in enumerate(ranking):
+                key = (module, api_key)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+                meta[key] = (desc, src)
+        ordered = sorted(scores, key=lambda k: scores[k], reverse=True)[:top_k]
+        return [
+            {"module": m, "api_key": k, "description": meta[(m, k)][0],
+             "source_app": meta[(m, k)][1], "score": round(scores[(m, k)], 4)}
+            for (m, k) in ordered
+        ]
+
     async def keyword_search(self, query: str, limit: int = 100) -> list[dict]:
         """Indexed replacement for the O(n) wiki scan.
 

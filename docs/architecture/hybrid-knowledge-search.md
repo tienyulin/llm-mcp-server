@@ -72,3 +72,23 @@ curl -s "localhost:8002/search_knowledge?query=how%20to%20bake%20bread"     # mo
 The same hybrid+floor applies to **API** search (`search_apis` is keyword-only;
 the live run missed "restore deleted" for endpoints). Extending RRF hybrid to
 `api_entries` is the next step.
+
+## Extended to API search (follow-up done)
+
+`search_apis` is now hybrid too (same RRF recipe over the existing `api_entries`
+vector + trigram indexes; `API_SEARCH_MIN_COSINE` floor). Reranking was evaluated
+and **skipped** — 2026 guidance: reranking helps when stage-1 is noisy or the
+corpus is large; ours is tiny and hybrid already returns the answer, so a
+reranker would add latency for no gain.
+
+Live evidence — `/recover` recall on paraphrase queries (real bge-small):
+
+| query | keyword | hybrid |
+|---|---|---|
+| recover / flashback recovery | ✓ | ✓ |
+| undo deleted rows | ✗ | ✓ |
+| roll back a table | ✗ | ✓ |
+| restore lost data | ✗ | ✓ |
+| revert a bad write | ✗ | ✓ |
+| **recall** | **2/6** | **6/6** |
+| how to bake bread (negative) | ✗ | ✗ (0 results) |

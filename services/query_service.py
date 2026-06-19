@@ -74,6 +74,19 @@ class QueryService:
         return result
 
     async def search_apis(self, query: str) -> tuple[list, str]:
+        # Hybrid (vector+keyword RRF) when PG+embeddings are up — keyword alone
+        # missed paraphrased endpoint queries. Falls back to pg keyword, then the
+        # cached-wiki scan, so an unconfigured/down PG degrades cleanly.
+        pg = self._pg()
+        if pg is not None and self._embedder is not None:
+            try:
+                qvec = await self._embedder.aembed_query(query)
+                min_cos = float(os.getenv("API_SEARCH_MIN_COSINE", "0.5"))
+                results = await pg.hybrid_search_apis(qvec, query, min_cosine=min_cos)
+                if results:
+                    return results, "hybrid"
+            except Exception as e:
+                logger.warning(f"API hybrid search failed, falling back to keyword: {e}")
         results, from_pg = await self._pg_first(lambda pg: pg.keyword_search(query))
         if from_pg:
             return results, "pg_keyword"
