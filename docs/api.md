@@ -8,7 +8,11 @@ fall back to scanning MinIO `wiki.json` when PG is unavailable.
 `{"modules": {"<module>": ["GET /x/items", ...]}}` — all modules/endpoints.
 
 ## `GET /search_apis?query=<q>`
-Keyword search. `{"results":[{module,api_key,description}], "count":N, "mode":"pg_keyword"|"wiki_scan"}`.
+**Hybrid** (vector + keyword RRF) when the PG index + embeddings are up, so
+paraphrased endpoint queries match ("undo deleted rows" → a `/recover` endpoint);
+falls back to `pg_keyword` then `wiki_scan`. Vector arm gated by
+`API_SEARCH_MIN_COSINE` (default 0.5) so irrelevant queries return nothing.
+`{"results":[{module,api_key,description,source_app,score?}], "count":N, "mode":"hybrid"|"pg_keyword"|"wiki_scan"}`.
 
 ## `GET /semantic_search?query=<q>&top_k=10`
 Vector similarity (cosine). Embeds the query, ranks `api_entries` by
