@@ -50,7 +50,10 @@ Served from `wiki.knowledge` (built by wiki-processor from `knowledge` docs).
 
 - `GET /list_knowledge` → `{knowledge: {doc_id: {title, source_app, topics}}}`
 - `GET /get_knowledge?doc_id=` → `{knowledge: {title, summary, topics, key_points, ...}}` or 404
-- `GET /search_knowledge?query=` → `{results: [{doc_id, title, summary, source_app}], count}`
+- `GET /search_knowledge?query=` → `{results: [{doc_id, title, summary, source_app, score?}], count, mode}`
+  — **hybrid** (vector + keyword RRF) when the PG index + embeddings are up, else
+  `keyword_fallback` (cached-wiki substring). A cosine floor (`MCP_KNOWLEDGE_MIN_COSINE`,
+  default 0.5) drops irrelevant near-neighbours. See [architecture/hybrid-knowledge-search.md](architecture/hybrid-knowledge-search.md).
 
 ## Native MCP — `POST /mcp/`
 A real [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable

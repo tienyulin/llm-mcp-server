@@ -139,8 +139,8 @@ async def search_knowledge(query: str, svc: QueryService = Depends(get_query_ser
     """Keyword search across knowledge docs (title/summary/topics/key_points)."""
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    results = await svc.search_knowledge(query)
-    return {"results": results, "count": len(results)}
+    results, mode = await svc.search_knowledge(query)
+    return {"results": results, "count": len(results), "mode": mode}
 
 
 @router.get("/skill")
