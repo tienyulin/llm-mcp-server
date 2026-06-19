@@ -108,9 +108,11 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Search ingested KNOWLEDGE documents (Oracle, FastAPI how-tos, reference
         material — not API specs) by keyword. Use this for conceptual/how-to
         questions ('how do I…', 'what is…', 'how to recover from data loss').
+        Hybrid (semantic + keyword) when the vector index is available, so
+        paraphrases match too (e.g. 'undo a delete' finds a flashback doc).
         Returns {doc_id, title, summary, source_app} matches."""
-        results = await get_query_service().search_knowledge(query)
-        return json.dumps({"results": results}, ensure_ascii=False)
+        results, mode = await get_query_service().search_knowledge(query)
+        return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
     @mcp.tool()
     async def get_knowledge(doc_id: str) -> str:

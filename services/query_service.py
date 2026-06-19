@@ -10,6 +10,7 @@ fallback cache is dropped PG is already fresh — reads never go backward.
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 from core.cache import _WIKI_CACHE_KEY, WikiCache
@@ -116,8 +117,22 @@ class QueryService:
     async def get_knowledge(self, doc_id: str):
         return self._wiki_service.get_knowledge(doc_id, await self._get_wiki())
 
-    async def search_knowledge(self, query: str) -> list:
-        return self._wiki_service.search_knowledge(query, await self._get_wiki())
+    async def search_knowledge(self, query: str) -> tuple[list, str]:
+        """Hybrid (vector+keyword RRF) when PG + embeddings are available; else
+        keyword scan over the cached wiki. Mirrors semantic_search's contract:
+        a degraded-but-answerable query never errors."""
+        pg = self._pg()
+        if pg is not None and self._embedder is not None:
+            try:
+                qvec = await self._embedder.aembed_query(query)
+                min_cos = float(os.getenv("MCP_KNOWLEDGE_MIN_COSINE", "0.5"))
+                results = await pg.hybrid_search_knowledge(qvec, query, min_cosine=min_cos)
+                if results:
+                    return results, "hybrid"
+            except Exception as e:
+                logger.warning(f"Knowledge hybrid search failed, falling back to keyword: {e}")
+        results = self._wiki_service.search_knowledge(query, await self._get_wiki())
+        return results, "keyword_fallback"
 
     async def build_skill(self, name: str) -> dict:
         return self._wiki_service.build_skill(await self._get_wiki(), name)
