@@ -1,69 +1,65 @@
-# Why a native MCP server (Streamable HTTP)
+# 為什麼要做原生 MCP server（Streamable HTTP）
 
-## The gap
+> 名詞：**MCP（Model Context Protocol）** = 讓 AI agent 原生連外部工具的協議；
+> **transport** = 連線方式；**stdio** = 走本機標準輸入/輸出（只能本機跑）；
+> **Streamable HTTP** = 一個 HTTP 端點、可多人連、可水平擴展。
 
-The project is named for MCP and its premise is "LLMs consume the wiki," but the
-service only ever spoke **REST**. An MCP **stdio** server existed once and was
-deliberately removed (commit `0f25439`, *"simplify mcp-server to HTTP API only,
-remove stdio version"*) because stdio can't be team-deployed — every user would
-run their own local process. So agents couldn't connect to the shared wiki the
-way the name promises; they needed a bespoke REST client.
+## 缺口
 
-## What changed in MCP
+這個專案以 MCP 命名、前提是「LLM 來消費這份 wiki」，但服務一直以來只會講 **REST**。
+曾經有過一個 MCP **stdio** server，但被刻意移除（commit `0f25439`，*"simplify
+mcp-server to HTTP API only, remove stdio version"*）—— 因為 stdio 無法團隊部署：
+每個使用者得各自跑一個本機 process。所以 agent 沒辦法照「名字承諾的方式」連到這份
+共用 wiki，只能自己寫一個客製 REST client。
 
-The choice in 2024 was binary: **stdio** (local, not deployable) *or* nothing.
-The MCP spec (2025-03-26) added the **Streamable HTTP** transport — a single HTTP
-endpoint that supports multiple concurrent clients, horizontal scaling, and OAuth,
-and is the recommended transport for remote servers. That dissolves the original
-tradeoff: one HTTP server that a team deploys **and** agents connect to natively.
+## MCP 改變了什麼
 
-## Decision
+2024 年的選擇是二選一：**stdio**（本機、不可部署）或什麼都沒有。MCP 規格
+（2025-03-26）新增 **Streamable HTTP** transport —— 單一 HTTP 端點，支援多個並發
+client、水平擴展、OAuth，是遠端 server 的建議 transport。這化解了原本的取捨：
+一個 HTTP server，團隊能部署，agent 也能原生連。
 
-Re-add MCP as a **thin tool layer over the existing `QueryService`** — the same
-logic REST uses — mounted on the existing FastAPI app at `/mcp` (live endpoint
-`POST /mcp/`). No second service, no new infra, no new dependency (`mcp` was
-already declared). REST stays for the web/team surface and the
-`/cache/invalidate` callback; MCP serves agents.
+## 決策
 
-**Stateless** (`stateless_http=True`): each request is self-contained, so the
-read-only server scales horizontally behind a load balancer with no session
-affinity — aligned with the MCP 2026 stateless-operation roadmap.
+把 MCP 重新加回來，做成**既有 `QueryService` 之上的薄工具層**（與 REST 同一套邏輯），
+掛在既有 FastAPI app 的 `/mcp`（實際端點 `POST /mcp/`）。不開第二個服務、不加新基礎
+設施、不加新相依（`mcp` 本來就在相依清單）。REST 留給網頁/團隊介面與
+`/cache/invalidate` callback；MCP 服務 agent。
 
-## Alternatives considered (and rejected)
+**無狀態**（`stateless_http=True`）：每個請求自包含，所以這個唯讀 server 可掛在負載
+平衡後水平擴展、無 session 黏滯 —— 對齊 MCP 2026 的無狀態運作路線。
 
-- **Keep REST-only + the `/skill` export.** `/skill` packages the wiki into a
-  *static* Anthropic Skill. Fine for distribution, but stale between rebuilds; MCP
-  gives live queries against the current wiki. Keep both — different jobs.
-- **Re-add stdio.** Same deployability problem that got it removed. Streamable
-  HTTP strictly dominates for a shared, team-deployed wiki.
-- **Bigger architectural changes** (replace the single `wiki.json`+CAS source of
-  truth; swap pgvector for vectorless retrieval). Considered and declined: both are
-  sound for the stated scale, and changing them adds complexity for little gain.
-  The MCP gap is the high-value, low-complexity, on-mission win.
+## 考慮過但否決的替代方案
 
-## Wiring notes (non-obvious, learned by testing)
+- **只留 REST + `/skill` 匯出。** `/skill` 把 wiki 打包成**靜態** Anthropic Skill。
+  做分發可以，但兩次重建之間會過期；MCP 提供對當前 wiki 的即時查詢。兩個都留 —— 分工不同。
+- **重新加回 stdio。** 同樣的不可部署問題。對共用、團隊部署的 wiki，Streamable HTTP 完勝。
+- **更大的架構改動**（換掉單一 `wiki.json`+CAS 真相來源；把 pgvector 換成無向量檢索）。
+  考慮後否決：以目前規模兩者都夠用，改了只增加複雜度、收益小。MCP 缺口才是高價值、
+  低複雜度、切題的勝點。
 
-- Official SDK (`mcp>=1.3.0`) exposes `FastMCP(...).streamable_http_app()` →
-  Starlette app (this is **not** the `http_app()` of the separate FastMCP v2).
-- Starlette does **not** auto-run a mounted sub-app's lifespan. The MCP session
-  manager must be started by hoisting `mcp_app.router.lifespan_context(mcp_app)`
-  into the parent FastAPI lifespan, else: *"Task group is not initialized."*
-- The session manager is **once-per-instance**; tests that enter the lifespan
-  repeatedly must build a fresh `create_app()` each time.
-- Set `streamable_http_path="/"` so mounting at `/mcp` yields exactly `/mcp/`
-  (otherwise the inner route nests to `/mcp/mcp`).
-- DNS-rebinding protection rejects unknown `Host` headers (HTTP 421). Configure
-  `MCP_ALLOWED_HOSTS` in production.
+## 接線筆記（不直覺，靠測試才發現）
 
-## How to verify
+- 官方 SDK（`mcp>=1.3.0`）的 `FastMCP(...).streamable_http_app()` → Starlette app
+  （這**不是** 另一個 FastMCP v2 的 `http_app()`）。
+- Starlette **不會**自動跑被掛載 sub-app 的 lifespan。MCP session manager 必須把
+  `mcp_app.router.lifespan_context(mcp_app)` 提升到父 FastAPI lifespan 裡啟動，否則：
+  *"Task group is not initialized."*
+- session manager **每個 instance 只能跑一次**；反覆進出 lifespan 的測試每次要建新的
+  `create_app()`。
+- 設 `streamable_http_path="/"`，掛在 `/mcp` 才會剛好是 `/mcp/`（否則內層 route 變成 `/mcp/mcp`）。
+- DNS-rebinding 保護會擋未知 `Host` header（HTTP 421）。正式環境設 `MCP_ALLOWED_HOSTS`。
+
+## 怎麼驗證
 
 ```bash
-# 1. bring up infra + wiki-processor + mcp-server, push an app to :8001/process
-# 2. handshake + call a tool over HTTP:
+# 1. 起 infra + wiki-processor + mcp-server，push 一個 app 到 :8001/process
+# 2. 用 HTTP 做 handshake + 呼叫工具：
 curl -s -X POST localhost:8002/mcp/ \
   -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"cli","version":"0"}}}'
 # → serverInfo.name == "llm-wiki"
-# tools/list → 8 tools; tools/call get_api_detail → entry with sources[] + provenance
+# tools/list → 工具清單；tools/call get_api_detail → 含 sources[] + 出處的條目
 ```
-Automated: `tests/test_mcp_server.py` (initialize → tools/list → tools/call).
+自動化：`tests/test_mcp_server.py`（initialize → tools/list → tools/call）。
+</content>

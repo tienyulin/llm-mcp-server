@@ -1,80 +1,79 @@
 # mcp-server API
 
-Read-only query API over the wiki. Base URL: `http://localhost:8002`.
-All reads are PG-first (keyword via `pg_trgm`, semantic via pgvector cosine) and
-fall back to scanning MinIO `wiki.json` when PG is unavailable.
+對 wiki 的唯讀查詢 API。Base URL：`http://localhost:8002`。
+所有讀取都 **PG 優先**（關鍵字走 `pg_trgm`，語意走 pgvector cosine），PG 不可用時
+退回掃 MinIO `wiki.json`。
+
+> 名詞：**PG-first** = 先查 Postgres（快），失敗退回 MinIO；**hybrid** = 關鍵字 +
+> 語意兩種搜尋用 RRF（倒數排名融合）合併；**cosine** = 向量夾角相似度。
 
 ## `GET /list_apis?module=<optional>`
-`{"modules": {"<module>": ["GET /x/items", ...]}}` — all modules/endpoints.
+`{"modules": {"<module>": ["GET /x/items", ...]}}` —— 所有 module / endpoint。
 
 ## `GET /search_apis?query=<q>`
-**Hybrid** (vector + keyword RRF) when the PG index + embeddings are up, so
-paraphrased endpoint queries match ("undo deleted rows" → a `/recover` endpoint);
-falls back to `pg_keyword` then `wiki_scan`. Vector arm gated by
-`API_SEARCH_MIN_COSINE` (default 0.5) so irrelevant queries return nothing.
-`{"results":[{module,api_key,description,source_app,score?}], "count":N, "mode":"hybrid"|"pg_keyword"|"wiki_scan"}`.
+PG 索引 + embedding 都在時為 **hybrid**（向量 + 關鍵字 RRF），所以改寫過的問法也命中
+（「undo deleted rows」→ `/recover` endpoint）；否則退回 `pg_keyword` 再 `wiki_scan`。
+向量側有 `API_SEARCH_MIN_COSINE`（預設 0.5）下限，不相關問句回空。
+`{"results":[{module,api_key,description,source_app,score?}], "count":N, "mode":"hybrid"|"pg_keyword"|"wiki_scan"}`。
 
 ## `GET /semantic_search?query=<q>&top_k=10`
-Vector similarity (cosine). Embeds the query, ranks `api_entries` by
-`1 - (embedding <=> query)`.
-`{"results":[{module,api_key,description,source_app,score}], "mode":"semantic"|"keyword_fallback"}`.
+向量相似度（cosine）。把 query 轉成向量，依 `1 - (embedding <=> query)` 排序 `api_entries`。
+`{"results":[{module,api_key,description,source_app,score}], "mode":"semantic"|"keyword_fallback"}`。
 
 ## `GET /get_api_detail?module=<m>&api_key=<METHOD /path>`
-`{"detail":{method,path,description,source_app,source_version, ...}}` or not-found.
+`{"detail":{method,path,description,source_app,source_version, ...}}`，找不到回 not-found。
 
 ## `GET /wiki_info`
-`{"modules":N,"total_endpoints":M,"vector_index":{available,semantic_search,entries,embedded,...}}`.
+`{"modules":N,"total_endpoints":M,"vector_index":{available,semantic_search,entries,embedded,...}}`。
 
 ## `GET /list_concepts`
-Cross-app concepts (built by wiki-processor's `/admin/rebuild-concepts`).
-`{"concepts":{"<name>":{description,apps:[...],related_count}}}` — empty until built.
+跨應用概念（由 wiki-processor 的 `/admin/rebuild-concepts` 建立）。
+`{"concepts":{"<name>":{description,apps:[...],related_count}}}` —— 未建立前為空。
 
 ## `GET /get_concept?name=<name>`
-`{"concept":{description,related:["<module>::<api_key>", ...],apps:[...]}}` or 404.
+`{"concept":{description,related:["<module>::<api_key>", ...],apps:[...]}}` 或 404。
 
 ## `GET /get_overview?app=<app>`
-Per-app overview synthesized at ingest. `{"overview":{text,updated_at}}` or 404.
+匯入時合成的每-app 總覽。`{"overview":{text,updated_at}}` 或 404。
 
 ## `GET /skill?name=<skill-name>`
-Packages the wiki into an Anthropic Skill folder.
-`{"files":{"<name>/SKILL.md":"...","<name>/references/concepts.md":"..."}}`.
+把 wiki 打包成 Anthropic Skill 資料夾。
+`{"files":{"<name>/SKILL.md":"...","<name>/references/concepts.md":"..."}}`。
 
 ## `GET /graph`
-Knowledge graph. `{"nodes":[{id,type,module?}],"edges":[{source,target,weight,kind}]}`.
-Edges: `shared_source` (4.0, endpoints sharing a source file), `concept` (3.0, concept→endpoint).
+知識圖譜。`{"nodes":[{id,type,module?}],"edges":[{source,target,weight,kind}]}`。
+邊：`shared_source`（4.0，共用同一來源檔的 endpoint）、`concept`（3.0，概念→endpoint）。
 
 ## `POST /cache/invalidate`
-`{"source_app":"my-app"}` → drops cached entries for that app (called by wiki-processor after a write).
+`{"source_app":"my-app"}` → 清掉該 app 的快取（wiki-processor 寫入後呼叫）。
 
 ## `GET /health`
 `{"status":"ok"}`
 
-## Knowledge documents (prose/reference, not API specs)
-Served from `wiki.knowledge` (built by wiki-processor from `knowledge` docs).
+## 知識文件（prose / 參考文件，非 API spec）
+由 `wiki.knowledge`（wiki-processor 從 `knowledge` 類文件建立）提供。
 
 - `GET /list_knowledge` → `{knowledge: {doc_id: {title, source_app, topics}}}`
-- `GET /get_knowledge?doc_id=` → `{knowledge: {title, summary, topics, key_points, ...}}` or 404
+- `GET /get_knowledge?doc_id=` → `{knowledge: {title, summary, topics, key_points, ...}}` 或 404
 - `GET /search_knowledge?query=` → `{results: [{doc_id, title, summary, source_app, score?}], count, mode}`
-  — **hybrid** (vector + keyword RRF) when the PG index + embeddings are up, else
-  `keyword_fallback` (cached-wiki substring). A cosine floor (`MCP_KNOWLEDGE_MIN_COSINE`,
-  default 0.5) drops irrelevant near-neighbours. See [architecture/hybrid-knowledge-search.md](architecture/hybrid-knowledge-search.md).
+  —— PG 索引 + embedding 在時為 **hybrid**（向量 + 關鍵字 RRF），否則 `keyword_fallback`
+  （掃快取 wiki 的子字串）。cosine 下限（`MCP_KNOWLEDGE_MIN_COSINE`，預設 0.5）擋掉不相關的
+  近鄰。見 [architecture/hybrid-knowledge-search.md](architecture/hybrid-knowledge-search.md)。
 
-## Native MCP — `POST /mcp/`
-A real [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable
-HTTP transport) mounted on the same app, so Claude / agents connect natively — no
-custom REST client. Stateless (`stateless_http=True`): horizontally scalable, no
-session affinity. Tools are thin wrappers over the same `QueryService` as REST:
-`search_apis`, `semantic_search`, `list_apis`, `get_api_detail`, `list_concepts`,
-`get_concept`, `get_overview`, `wiki_info`, `search_knowledge`, `get_knowledge`,
-`list_knowledge`. Knowledge docs are also exposed as MCP **resources**
-(`knowledge://{doc_id}`) — idiomatic read-only context.
+## 原生 MCP —— `POST /mcp/`
+真正的 [Model Context Protocol](https://modelcontextprotocol.io) server（Streamable
+HTTP transport），掛在同一個 app 上，讓 Claude / agent 原生連線，不用自寫 REST client。
+無狀態（`stateless_http=True`）：可水平擴展、無 session 黏滯。工具是與 REST 同一套
+`QueryService` 的薄包裝：`search_apis`、`semantic_search`、`list_apis`、`get_api_detail`、
+`list_concepts`、`get_concept`、`get_overview`、`wiki_info`、`search_knowledge`、
+`get_knowledge`、`list_knowledge`。知識文件另以 MCP **resource**（`knowledge://{doc_id}`）
+形式提供 —— 慣用的唯讀 context。
 
-Connect (Claude Code): `claude mcp add --transport http llm-wiki http://localhost:8002/mcp/`
+連線（Claude Code）：`claude mcp add --transport http llm-wiki http://localhost:8002/mcp/`
 
-Production: set `MCP_ALLOWED_HOSTS` (comma-separated) to enable DNS-rebinding
-protection; unset = protection off (dev default). See
-[architecture/mcp-transport.md](architecture/mcp-transport.md) for the design rationale.
+正式環境：設 `MCP_ALLOWED_HOSTS`（逗號分隔）開啟 DNS-rebinding 保護；不設 = 關閉（dev 預設）。
+設計緣由見 [architecture/mcp-transport.md](architecture/mcp-transport.md)。
 
-How semantic search resolves (query → embed → pgvector cosine → rank), with a
-fully worked real example, is in the platform doc
-`docs/examples/real-semantic-walkthrough.md` and `docs/architecture/vector-search.md`.
+語意搜尋怎麼運作（query → embed → pgvector cosine → 排序）的完整實例，見平台文件
+`docs/examples/real-semantic-walkthrough.md` 與 `docs/architecture/vector-search.md`。
+</content>

@@ -1,10 +1,9 @@
-# mcp-server — architecture
+# mcp-server —— 架構
 
-Read-only query service. Layered: `http_api/` (routers) → `services/`
-(query logic + pure wiki functions) → `repository/` (MinIO + PG readers).
-Every read is PG-first with cached-wiki fallback.
+唯讀查詢服務。分層：`http_api/`（路由）→ `services/`（查詢邏輯 + 純 wiki 函式）
+→ `repository/`（MinIO + PG 讀取器）。每次讀取都 PG 優先、可退回快取 wiki。
 
-## Internal layering
+## 內部分層
 
 ```mermaid
 flowchart TD
@@ -31,7 +30,7 @@ flowchart TD
     CACHE --> MIN
 ```
 
-## Read path (PG-first, always answerable)
+## 讀取路徑（PG 優先，永遠答得出來）
 
 ```mermaid
 flowchart TD
@@ -48,6 +47,10 @@ flowchart TD
     SCAN --> RET2["return (mode: wiki_scan / keyword_fallback)"]
 ```
 
-Concepts, overviews, skill, and graph read **only** the cached `wiki.json` (no PG
-path) — wiki-processor produces `concepts`/`overviews`; mcp-server just serves
-them. See [`docs/api.md`](../api.md) for endpoint shapes.
+概念（concepts）、總覽（overviews）、skill、graph **只**讀快取的 `wiki.json`（不走 PG）
+—— `concepts`/`overviews` 由 wiki-processor 產生，mcp-server 只負責提供。
+端點格式見 [`docs/api.md`](../api.md)。
+
+> 名詞：**circuit breaker（斷路器）** = PG 連續失敗就暫時跳過、走 fallback，避免一直撞死節點；
+> **TTL cache** = 結果暫存一段時間（time-to-live）。
+</content>
