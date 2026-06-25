@@ -1,5 +1,7 @@
 # mcp-server
 
+> 👉 想看這個服務**實際怎麼運作（含真實紀錄）**：[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)。
+
 LLM Wiki 平台的**唯讀查詢端（read-only query service）**。對 `wiki-processor` 建好的
 wiki 提供關鍵字、語意、結構化查詢。**PG 優先（PG-first）**：關鍵字走 `pg_trgm`、
 語意走 pgvector cosine；索引不可用時自動退回掃 MinIO `wiki.json`。內建記憶體 TTL
