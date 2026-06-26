@@ -43,9 +43,28 @@ WIKI = {
             "title": "Oracle Flashback", "source_app": "oracle-kb",
             "summary": "Oracle Flashback recovers data after accidental data loss.",
             "topics": ["Flashback Table"], "key_points": ["Recovers dropped rows"],
-            "sources": ["oracle-flashback.md"], "source_version": "v1"},
+            "sources": ["oracle-flashback.md"], "source_version": "v1",
+            "doc_type": "how-to", "tags": ["recovery"]},
+        "fastapi-kb:howto": {
+            "title": "FastAPI how-to", "source_app": "fastapi-kb",
+            "summary": "How to build an endpoint.", "topics": [], "key_points": [],
+            "doc_type": "tutorial", "tags": ["fastapi"]},
     },
 }
+
+
+def test_knowledge_type_filter():
+    svc = WikiService(None)
+    # list_knowledge filtered by Diataxis type
+    assert set(svc.list_knowledge(WIKI, type="how-to")) == {"oracle-kb:oracle-flashback"}
+    assert set(svc.list_knowledge(WIKI, type="tutorial")) == {"fastapi-kb:howto"}
+    # entry summary view surfaces doc_type + tags
+    assert svc.list_knowledge(WIKI)["oracle-kb:oracle-flashback"]["doc_type"] == "how-to"
+    assert svc.list_knowledge(WIKI)["oracle-kb:oracle-flashback"]["tags"] == ["recovery"]
+    # search_knowledge type filter
+    hits = svc.search_knowledge("endpoint", WIKI, type="tutorial")
+    assert [h["doc_id"] for h in hits] == ["fastapi-kb:howto"]
+    assert svc.search_knowledge("endpoint", WIKI, type="how-to") == []
 
 
 def test_list_concepts(service):

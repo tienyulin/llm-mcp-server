@@ -104,14 +104,14 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         return json.dumps(await get_query_service().wiki_info(), ensure_ascii=False)
 
     @mcp.tool()
-    async def search_knowledge(query: str) -> str:
+    async def search_knowledge(query: str, type: str = "") -> str:
         """Search ingested KNOWLEDGE documents (Oracle, FastAPI how-tos, reference
-        material — not API specs) by keyword. Use this for conceptual/how-to
-        questions ('how do I…', 'what is…', 'how to recover from data loss').
-        Hybrid (semantic + keyword) when the vector index is available, so
-        paraphrases match too (e.g. 'undo a delete' finds a flashback doc).
-        Returns {doc_id, title, summary, source_app} matches."""
-        results, mode = await get_query_service().search_knowledge(query)
+        material — not API specs). Use this for conceptual/how-to questions
+        ('how do I…', 'what is…', 'how to recover from data loss'). Hybrid
+        (semantic + keyword) so paraphrases match. Optional `type` filters by
+        Diataxis doc_type (tutorial/how-to/reference/explanation).
+        Returns {doc_id, title, summary, source_app, doc_type, tags} matches."""
+        results, mode = await get_query_service().search_knowledge(query, type=type)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
     @mcp.tool()
@@ -121,9 +121,10 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         return json.dumps(entry, ensure_ascii=False) if entry else f"No knowledge doc: {doc_id}"
 
     @mcp.tool()
-    async def list_knowledge() -> str:
-        """List ingested knowledge documents ({doc_id: {title, source_app, topics}})."""
-        return json.dumps(await get_query_service().list_knowledge(), ensure_ascii=False)
+    async def list_knowledge(type: str = "") -> str:
+        """List ingested knowledge documents ({doc_id: {title, source_app, topics,
+        doc_type, tags}}). Optional `type` filters by Diataxis doc_type."""
+        return json.dumps(await get_query_service().list_knowledge(type=type), ensure_ascii=False)
 
     # Knowledge docs are read-only reference material → also exposed as MCP
     # *resources* (idiomatic: resources = what the client can read, tools = what
@@ -133,4 +134,31 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         entry = await get_query_service().get_knowledge(doc_id)
         return json.dumps(entry, ensure_ascii=False) if entry else f"No knowledge doc: {doc_id}"
 
+    # Authoring contract: how a producer should write source docs for THIS wiki.
+    # A connected agent can read this to self-serve (no skill install needed).
+    @mcp.resource("authoring-contract://source-docs")
+    async def authoring_contract() -> str:
+        return _AUTHORING_CONTRACT
+
     return mcp
+
+
+_AUTHORING_CONTRACT = """\
+# 源頭文件標準（怎麼寫文件餵這個 wiki）
+
+每個 app 一律寫一份 README；能產 OpenAPI 的 app 另附最新 openapi.json（pre-commit 保持同步）。
+
+## README frontmatter（YAML）
+- type（必填）：api | tutorial | how-to | reference | explanation
+- source_app（必填）：小寫+連字號
+- tags（選填）：受控詞彙，小寫+連字號
+## body
+- H1 標題；第一段＝一句話用途/摘要（會被 embed，影響語意搜尋）。
+- 沒有 openapi.json 的 app：加 Endpoints 區，每行 `METHOD /path — 用途`。
+- 有 openapi.json：endpoint 交給它（不用手抄），README 專注用途/概覽。
+
+## 知識文件
+用 Diátaxis 的 type：tutorial（帶著做）/ how-to（解決問題）/ reference（查閱）/ explanation（概念）。
+
+完整標準與 pre-commit/CI 工具見平台 docs/guides/authoring-source-docs.md。
+"""

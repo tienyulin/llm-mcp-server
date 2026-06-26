@@ -124,28 +124,42 @@ class QueryService:
     async def get_overview(self, app: str) -> Optional[dict]:
         return self._wiki_service.get_overview(app, await self._get_wiki())
 
-    async def list_knowledge(self) -> dict:
-        return self._wiki_service.list_knowledge(await self._get_wiki())
+    async def list_knowledge(self, type: str = "") -> dict:
+        return self._wiki_service.list_knowledge(await self._get_wiki(), type=type)
 
     async def get_knowledge(self, doc_id: str):
         return self._wiki_service.get_knowledge(doc_id, await self._get_wiki())
 
-    async def search_knowledge(self, query: str) -> tuple[list, str]:
+    async def search_knowledge(self, query: str, type: str = "") -> tuple[list, str]:
         """Hybrid (vector+keyword RRF) when PG + embeddings are available; else
         keyword scan over the cached wiki. Mirrors semantic_search's contract:
-        a degraded-but-answerable query never errors."""
+        a degraded-but-answerable query never errors. Results are enriched with
+        doc_type/tags from the cached wiki (PG rows don't carry them); optional
+        `type` filters by Diataxis doc_type."""
         pg = self._pg()
+        results, mode = None, "keyword_fallback"
         if pg is not None and self._embedder is not None:
             try:
                 qvec = await self._embedder.aembed_query(query)
                 min_cos = float(os.getenv("MCP_KNOWLEDGE_MIN_COSINE", "0.5"))
-                results = await pg.hybrid_search_knowledge(qvec, query, min_cosine=min_cos)
-                if results:
-                    return results, "hybrid"
+                hits = await pg.hybrid_search_knowledge(qvec, query, min_cosine=min_cos)
+                if hits:
+                    results, mode = hits, "hybrid"
             except Exception as e:
                 logger.warning(f"Knowledge hybrid search failed, falling back to keyword: {e}")
-        results = self._wiki_service.search_knowledge(query, await self._get_wiki())
-        return results, "keyword_fallback"
+        if results is None:
+            results = self._wiki_service.search_knowledge(query, await self._get_wiki(), type=type)
+            return results, "keyword_fallback"
+        # enrich + type-filter against the cached wiki (PG rows lack doc_type/tags)
+        knowledge = (await self._get_wiki()).get("knowledge", {})
+        enriched = []
+        for r in results:
+            e = knowledge.get(r.get("doc_id"), {})
+            r = {**r, "doc_type": e.get("doc_type"), "tags": e.get("tags", [])}
+            if type and r["doc_type"] != type:
+                continue
+            enriched.append(r)
+        return enriched, mode
 
     async def build_skill(self, name: str) -> dict:
         return self._wiki_service.build_skill(await self._get_wiki(), name)

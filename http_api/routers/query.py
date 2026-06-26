@@ -120,9 +120,10 @@ async def get_overview(app: str, svc: QueryService = Depends(get_query_service))
 
 
 @router.get("/list_knowledge")
-async def list_knowledge(svc: QueryService = Depends(get_query_service)):
-    """Knowledge documents (prose/reference) ingested into the wiki."""
-    return {"knowledge": await svc.list_knowledge()}
+async def list_knowledge(type: str = "", svc: QueryService = Depends(get_query_service)):
+    """Knowledge documents (prose/reference) ingested into the wiki.
+    Optional `type` filters by Diataxis doc_type (tutorial/how-to/reference/explanation)."""
+    return {"knowledge": await svc.list_knowledge(type=type)}
 
 
 @router.get("/get_knowledge")
@@ -135,11 +136,11 @@ async def get_knowledge(doc_id: str, svc: QueryService = Depends(get_query_servi
 
 
 @router.get("/search_knowledge")
-async def search_knowledge(query: str, svc: QueryService = Depends(get_query_service)):
-    """Keyword search across knowledge docs (title/summary/topics/key_points)."""
+async def search_knowledge(query: str, type: str = "", svc: QueryService = Depends(get_query_service)):
+    """Hybrid search across knowledge docs. Optional `type` filters by Diataxis doc_type."""
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    results, mode = await svc.search_knowledge(query)
+    results, mode = await svc.search_knowledge(query, type=type)
     return {"results": results, "count": len(results), "mode": mode}
 
 

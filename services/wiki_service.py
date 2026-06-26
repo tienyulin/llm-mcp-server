@@ -169,15 +169,20 @@ class WikiService:
 
     # ---- Knowledge documents (prose/reference, not API specs) ----
 
-    def list_knowledge(self, wiki: dict) -> dict[str, dict]:
-        """{doc_id: {title, source_app, topics}} — summary view."""
+    def list_knowledge(self, wiki: dict, type: str = "") -> dict[str, dict]:
+        """{doc_id: {title, source_app, topics, doc_type, tags}} — summary view.
+        Optional `type` filters by Diataxis doc_type (tutorial/how-to/...)."""
         out = {}
         for doc_id, e in wiki.get("knowledge", {}).items():
             if not isinstance(e, dict):
                 continue
+            if type and e.get("doc_type") != type:
+                continue
             out[doc_id] = {"title": e.get("title", doc_id),
                            "source_app": e.get("source_app", ""),
-                           "topics": e.get("topics", [])}
+                           "topics": e.get("topics", []),
+                           "doc_type": e.get("doc_type"),
+                           "tags": e.get("tags", [])}
         return out
 
     def get_knowledge(self, doc_id: str, wiki: dict) -> dict | None:
@@ -185,13 +190,16 @@ class WikiService:
         e = wiki.get("knowledge", {}).get(doc_id)
         return e if isinstance(e, dict) else None
 
-    def search_knowledge(self, query: str, wiki: dict) -> list[dict]:
+    def search_knowledge(self, query: str, wiki: dict, type: str = "") -> list[dict]:
         """Keyword search across knowledge docs (title/summary/topics/key_points).
-        Returns {doc_id, title, summary, source_app} for matches."""
+        Returns {doc_id, title, summary, source_app, doc_type, tags}. Optional
+        `type` filters by Diataxis doc_type."""
         q = query.strip().lower()
         results = []
         for doc_id, e in wiki.get("knowledge", {}).items():
             if not isinstance(e, dict):
+                continue
+            if type and e.get("doc_type") != type:
                 continue
             hay = " ".join([
                 doc_id, e.get("title", ""), e.get("summary", ""),
@@ -200,7 +208,9 @@ class WikiService:
             if q in hay:
                 results.append({"doc_id": doc_id, "title": e.get("title", doc_id),
                                 "summary": e.get("summary", ""),
-                                "source_app": e.get("source_app", "")})
+                                "source_app": e.get("source_app", ""),
+                                "doc_type": e.get("doc_type"),
+                                "tags": e.get("tags", [])})
         return results
 
     def build_graph(self, wiki: dict) -> dict:
