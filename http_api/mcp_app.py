@@ -47,24 +47,40 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
     """Build the MCP server. `get_query_service` returns a QueryService bound to
     the live reader singletons (called per tool invocation, so it always sees
     the current app.state and the freshest cached wiki)."""
+    # The wiki is a single-language corpus (WIKI_QUERY_LANG). Cross-language
+    # retrieval of short text is weak, but same-language retrieval is strong — so
+    # the calling agent translates the user's question into the corpus language
+    # before searching (it is already an LLM; this is free and avoids needing a
+    # large multilingual embedding model or a server-side translator).
+    lang = os.getenv("WIKI_QUERY_LANG", "中文 (Chinese)")
+    _xlate = (
+        f"本 wiki 全部以 {lang} 撰寫，檢索是單語的（同語言命中遠強）。"
+        f"呼叫 search_apis / semantic_search / search_knowledge 前，"
+        f"請先把使用者的問題翻成 {lang} 再查；結果為 {lang}，回給使用者時自行譯回。"
+    )
     mcp = FastMCP(
         "llm-wiki",
+        instructions=_xlate,
         stateless_http=True,
         transport_security=_transport_security(),
     )
     mcp.settings.streamable_http_path = "/"  # mounted at /mcp -> live path /mcp/
 
-    @mcp.tool()
+    def _q(desc: str) -> str:
+        """Prefix a search tool's description with the translate-first reminder."""
+        return f"⚠️ query 請先翻成 {lang}（單語語料）。\n{desc}"
+
+    @mcp.tool(description=_q(
+        "Search API endpoints across the wiki (path, description, app). "
+        "Returns matching {module, api_key, description} entries."))
     async def search_apis(query: str) -> str:
-        """Keyword-search API endpoints across the wiki (path, description, app).
-        Returns matching {module, api_key, description} entries."""
         results, mode = await get_query_service().search_apis(query)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(description=_q(
+        "Semantic (vector) search over API endpoints; falls back to keyword "
+        "search when the vector index is unavailable."))
     async def semantic_search(query: str, top_k: int = 10) -> str:
-        """Semantic (vector) search over API endpoints; falls back to keyword
-        search when the vector index is unavailable."""
         results, mode = await get_query_service().semantic_search(query, max(1, min(top_k, 50)))
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
@@ -103,14 +119,13 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Wiki statistics: module/endpoint counts and vector-index status."""
         return json.dumps(await get_query_service().wiki_info(), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(description=_q(
+        "Search ingested KNOWLEDGE documents (how-tos, reference material — not "
+        "API specs). Use this for conceptual/how-to questions. Hybrid "
+        "(semantic + keyword) so paraphrases match. Optional `type` filters by "
+        "Diataxis doc_type (tutorial/how-to/reference/explanation). "
+        "Returns {doc_id, title, summary, source_app, doc_type, tags} matches."))
     async def search_knowledge(query: str, type: str = "") -> str:
-        """Search ingested KNOWLEDGE documents (Oracle, FastAPI how-tos, reference
-        material — not API specs). Use this for conceptual/how-to questions
-        ('how do I…', 'what is…', 'how to recover from data loss'). Hybrid
-        (semantic + keyword) so paraphrases match. Optional `type` filters by
-        Diataxis doc_type (tutorial/how-to/reference/explanation).
-        Returns {doc_id, title, summary, source_app, doc_type, tags} matches."""
         results, mode = await get_query_service().search_knowledge(query, type=type)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
@@ -147,6 +162,11 @@ _AUTHORING_CONTRACT = """\
 # 源頭文件標準（怎麼寫文件餵這個 wiki）
 
 每個 app 一律寫一份 README；能產 OpenAPI 的 app 另附最新 openapi.json（pre-commit 保持同步）。
+
+## 語言（重要）
+全部文件用專案 canonical 語言寫（預設中文，見 WIKI_QUERY_LANG）—— README 摘要、endpoint 描述
+（含 OpenAPI 的 `summary=`，寫在 code 裡）、知識文件都同一種語言。wiki 是單語語料，查詢端 agent
+查詢前會把問題翻成這個語言；語料混語言會讓檢索對不上。
 
 ## README frontmatter（YAML）
 - type（必填）：api | tutorial | how-to | reference | explanation
