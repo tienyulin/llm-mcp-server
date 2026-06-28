@@ -148,15 +148,16 @@ def _register_knowledge_tools(
             "Search ingested KNOWLEDGE documents (how-tos, reference material — not "
             "API specs). Use this for conceptual/how-to questions. Hybrid "
             "(semantic + keyword) so paraphrases match. Optional `type` filters by "
-            "Diataxis doc_type (tutorial/how-to/reference/explanation). "
+            "Diataxis doc_type (tutorial/how-to/reference/explanation) and `tag` by a "
+            "single tag (cronjob/worker/cli, which all share doc_type=reference). "
             "Returns {doc_id, title, summary, source_app, doc_type, tags} matches."
         )
     )
     # `type` mirrors the public REST/MCP query param name (Diataxis doc_type); renaming
     # it would change the tool's wire schema.
-    async def search_knowledge(query: str, type: str = "") -> str:
+    async def search_knowledge(query: str, type: str = "", tag: str = "") -> str:
         # pylint: disable=redefined-builtin
-        results, mode = await get_query_service().search_knowledge(query, type=type)
+        results, mode = await get_query_service().search_knowledge(query, type=type, tag=tag)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
     @mcp.tool()
@@ -168,10 +169,15 @@ def _register_knowledge_tools(
     @mcp.tool()
     # `type` mirrors the public REST/MCP query param name (Diataxis doc_type); renaming
     # it would change the tool's wire schema.
-    async def list_knowledge(type: str = "") -> str:  # pylint: disable=redefined-builtin
+    async def list_knowledge(  # pylint: disable=redefined-builtin
+        type: str = "", tag: str = ""
+    ) -> str:
         """List ingested knowledge documents ({doc_id: {title, source_app, topics,
-        doc_type, tags}}). Optional `type` filters by Diataxis doc_type."""
-        return json.dumps(await get_query_service().list_knowledge(type=type), ensure_ascii=False)
+        doc_type, tags}}). Optional `type` filters by Diataxis doc_type, `tag` by a
+        single tag (cronjob/worker/cli all share doc_type=reference)."""
+        return json.dumps(
+            await get_query_service().list_knowledge(type=type, tag=tag), ensure_ascii=False
+        )
 
     # Knowledge docs are read-only reference material → also exposed as MCP
     # *resources* (idiomatic: resources = what the client can read, tools = what

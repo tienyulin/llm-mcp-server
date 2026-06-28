@@ -101,6 +101,47 @@ def test_knowledge_type_filter():
     assert not svc.search_knowledge("endpoint", WIKI, type="how-to")
 
 
+def test_knowledge_tag_filter():
+    """list_knowledge/search_knowledge filter by a single tag — the only way to
+    tell apart components that share doc_type=reference (cronjob vs worker)."""
+    svc = WikiService(None)  # type: ignore[arg-type]
+    # on the module fixture, tags discriminate the two knowledge docs
+    assert set(svc.list_knowledge(WIKI, tag="recovery")) == {"oracle-kb:oracle-flashback"}
+    assert set(svc.list_knowledge(WIKI, tag="fastapi")) == {"fastapi-kb:howto"}
+    assert not svc.list_knowledge(WIKI, tag="nonexistent")
+
+    # the motivating case: two reference docs that differ ONLY by tag
+    wiki = {
+        "knowledge": {
+            "billing-nightly:README": {
+                "title": "Nightly Billing Job",
+                "summary": "每晚對到期帳單扣款。",
+                "doc_type": "reference",
+                "tags": ["cronjob"],
+            },
+            "queue-worker:README": {
+                "title": "Queue Worker",
+                "summary": "消費 billing 事件並扣款。",
+                "doc_type": "reference",
+                "tags": ["worker"],
+            },
+        }
+    }
+    # type alone cannot separate them; tag does
+    assert set(svc.list_knowledge(wiki, type="reference")) == {
+        "billing-nightly:README",
+        "queue-worker:README",
+    }
+    assert set(svc.list_knowledge(wiki, tag="cronjob")) == {"billing-nightly:README"}
+    assert set(svc.list_knowledge(wiki, tag="worker")) == {"queue-worker:README"}
+    # type + tag combine (AND)
+    assert set(svc.list_knowledge(wiki, type="reference", tag="worker")) == {"queue-worker:README"}
+    # search_knowledge honours the tag filter too
+    hits = svc.search_knowledge("扣款", wiki, tag="cronjob")
+    assert [h["doc_id"] for h in hits] == ["billing-nightly:README"]
+    assert not svc.search_knowledge("扣款", wiki, tag="nonexistent")
+
+
 def test_list_concepts(service):
     """list_concepts summarizes each concept's apps and related count."""
     out = service.list_concepts(WIKI)

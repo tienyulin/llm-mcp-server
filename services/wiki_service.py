@@ -183,15 +183,19 @@ class WikiService:
 
     # `type` is the public param name (Diataxis doc_type); renaming changes the API.
     def list_knowledge(  # pylint: disable=redefined-builtin
-        self, wiki: dict, type: str = ""
+        self, wiki: dict, type: str = "", tag: str = ""
     ) -> dict[str, dict]:
         """{doc_id: {title, source_app, topics, doc_type, tags}} — summary view.
-        Optional `type` filters by Diataxis doc_type (tutorial/how-to/...)."""
+        Optional `type` filters by Diataxis doc_type (tutorial/how-to/...);
+        `tag` filters by a single tag (e.g. cronjob/worker/cli, which all share
+        doc_type=reference and are only told apart by their tags)."""
         out = {}
         for doc_id, e in wiki.get("knowledge", {}).items():
             if not isinstance(e, dict):
                 continue
             if type and e.get("doc_type") != type:
+                continue
+            if tag and tag not in (e.get("tags") or []):
                 continue
             out[doc_id] = {
                 "title": e.get("title", doc_id),
@@ -209,17 +213,19 @@ class WikiService:
 
     # `type` is the public param name (Diataxis doc_type); renaming changes the API.
     def search_knowledge(  # pylint: disable=redefined-builtin
-        self, query: str, wiki: dict, type: str = ""
+        self, query: str, wiki: dict, type: str = "", tag: str = ""
     ) -> list[dict]:
         """Keyword search across knowledge docs (title/summary/topics/key_points).
         Returns {doc_id, title, summary, source_app, doc_type, tags}. Optional
-        `type` filters by Diataxis doc_type."""
+        `type` filters by Diataxis doc_type; `tag` filters by a single tag."""
         q = query.strip().lower()
         results = []
         for doc_id, e in wiki.get("knowledge", {}).items():
             if not isinstance(e, dict):
                 continue
             if type and e.get("doc_type") != type:
+                continue
+            if tag and tag not in (e.get("tags") or []):
                 continue
             hay = " ".join(
                 [

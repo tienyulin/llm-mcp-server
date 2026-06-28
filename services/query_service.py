@@ -137,9 +137,12 @@ class QueryService:
         return self._wiki_service.get_overview(app, await self._get_wiki())
 
     # `type` is the public param name (Diataxis doc_type); renaming changes the API.
-    async def list_knowledge(self, type: str = "") -> dict:  # pylint: disable=redefined-builtin
-        """Knowledge documents (summary view), optionally filtered by doc_type."""
-        return self._wiki_service.list_knowledge(await self._get_wiki(), type=type)
+    async def list_knowledge(
+        self, type: str = "", tag: str = ""  # pylint: disable=redefined-builtin
+    ) -> dict:
+        """Knowledge documents (summary view), optionally filtered by doc_type
+        and/or a single tag (cronjob/worker/cli share doc_type=reference)."""
+        return self._wiki_service.list_knowledge(await self._get_wiki(), type=type, tag=tag)
 
     async def get_knowledge(self, doc_id: str):
         """Full knowledge entry, or None when absent."""
@@ -147,13 +150,13 @@ class QueryService:
 
     # `type` is the public param name (Diataxis doc_type); renaming changes the API.
     async def search_knowledge(  # pylint: disable=redefined-builtin
-        self, query: str, type: str = ""
+        self, query: str, type: str = "", tag: str = ""
     ) -> tuple[list, str]:
         """Hybrid (vector+keyword RRF) when PG + embeddings are available; else
         keyword scan over the cached wiki. Mirrors semantic_search's contract:
         a degraded-but-answerable query never errors. Results are enriched with
         doc_type/tags from the cached wiki (PG rows don't carry them); optional
-        `type` filters by Diataxis doc_type."""
+        `type` filters by Diataxis doc_type and `tag` by a single tag."""
         pg = self._pg()
         results, mode = None, "keyword_fallback"
         if pg is not None and self._embedder is not None:
@@ -167,15 +170,19 @@ class QueryService:
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning("Knowledge hybrid search failed, falling back to keyword: %s", e)
         if results is None:
-            results = self._wiki_service.search_knowledge(query, await self._get_wiki(), type=type)
+            results = self._wiki_service.search_knowledge(
+                query, await self._get_wiki(), type=type, tag=tag
+            )
             return results, "keyword_fallback"
-        # enrich + type-filter against the cached wiki (PG rows lack doc_type/tags)
+        # enrich + type/tag-filter against the cached wiki (PG rows lack doc_type/tags)
         knowledge = (await self._get_wiki()).get("knowledge", {})
         enriched = []
         for r in results:
             entry = knowledge.get(r.get("doc_id"), {})
             r = {**r, "doc_type": entry.get("doc_type"), "tags": entry.get("tags", [])}
             if type and r["doc_type"] != type:
+                continue
+            if tag and tag not in (r.get("tags") or []):
                 continue
             enriched.append(r)
         return enriched, mode
