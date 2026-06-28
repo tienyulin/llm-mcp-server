@@ -120,11 +120,12 @@ async def get_overview(app: str, svc: QueryService = Depends(get_query_service))
 @router.get("/list_knowledge")
 # `type` is the public query-param name (Diataxis doc_type); renaming changes the HTTP API.
 async def list_knowledge(  # pylint: disable=redefined-builtin
-    type: str = "", svc: QueryService = Depends(get_query_service)
+    type: str = "", tag: str = "", svc: QueryService = Depends(get_query_service)
 ):
     """Knowledge documents (prose/reference) ingested into the wiki.
-    Optional `type` filters by Diataxis doc_type (tutorial/how-to/reference/explanation)."""
-    return {"knowledge": await svc.list_knowledge(type=type)}
+    Optional `type` filters by Diataxis doc_type (tutorial/how-to/reference/explanation);
+    `tag` filters by a single tag (cronjob/worker/cli all share doc_type=reference)."""
+    return {"knowledge": await svc.list_knowledge(type=type, tag=tag)}
 
 
 @router.get("/get_knowledge")
@@ -139,12 +140,13 @@ async def get_knowledge(doc_id: str, svc: QueryService = Depends(get_query_servi
 @router.get("/search_knowledge")
 # `type` is the public query-param name (Diataxis doc_type); renaming changes the HTTP API.
 async def search_knowledge(  # pylint: disable=redefined-builtin
-    query: str, type: str = "", svc: QueryService = Depends(get_query_service)
+    query: str, type: str = "", tag: str = "", svc: QueryService = Depends(get_query_service)
 ):
-    """Hybrid search across knowledge docs. Optional `type` filters by Diataxis doc_type."""
+    """Hybrid search across knowledge docs. Optional `type` filters by Diataxis
+    doc_type; `tag` filters by a single tag (e.g. cronjob)."""
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    results, mode = await svc.search_knowledge(query, type=type)
+    results, mode = await svc.search_knowledge(query, type=type, tag=tag)
     return {"results": results, "count": len(results), "mode": mode}
 
 
