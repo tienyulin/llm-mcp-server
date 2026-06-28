@@ -7,6 +7,8 @@ from typing import TypedDict
 
 
 class ApiEntry(TypedDict, total=False):
+    """One API endpoint record as stored in wiki.json (all keys optional)."""
+
     module: str
     api_key: str
     description: str

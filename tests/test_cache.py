@@ -1,4 +1,5 @@
 """Tests for WikiCache invalidation semantics."""
+
 import time
 
 from core.cache import WikiCache
@@ -30,6 +31,7 @@ def test_invalidate_drops_shared_wiki_entry():
 
 
 def test_invalidate_without_source_clears_all():
+    """invalidate_by_source(None) drops every cached entry, not just one app's."""
     cache = WikiCache(ttl_seconds=3600)
     cache.set("wiki", {"apis": {}})
     cache.set("wiki:app-1", {"a": 1})
@@ -41,6 +43,7 @@ def test_invalidate_without_source_clears_all():
 
 
 def test_ttl_expiry():
+    """An entry read after its TTL elapses returns None (lazy expiry)."""
     cache = WikiCache(ttl_seconds=0.01)
     cache.set("wiki", {"apis": {}})
     assert cache.get("wiki") == {"apis": {}}

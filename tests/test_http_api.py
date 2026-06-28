@@ -1,7 +1,12 @@
 """Tests for HTTP API server (wiki-scan path, no PG)."""
 
-import pytest
+# pytest conventions: fixtures injected as same-named params (redefined-outer-name)
+# and request-only fixtures whose value is unused (unused-argument).
+# pylint: disable=redefined-outer-name,unused-argument
+
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
 
 from http_api.main import app
@@ -9,8 +14,16 @@ from http_api.main import app
 SAMPLE_WIKI = {
     "apis": {
         "inventory": {
-            "GET /inventory/{id}": {"description": "Get inventory item", "method": "GET", "path": "/inventory/{id}"},
-            "POST /inventory": {"description": "Create inventory item", "method": "POST", "path": "/inventory"},
+            "GET /inventory/{id}": {
+                "description": "Get inventory item",
+                "method": "GET",
+                "path": "/inventory/{id}",
+            },
+            "POST /inventory": {
+                "description": "Create inventory item",
+                "method": "POST",
+                "path": "/inventory",
+            },
         },
         "orders": {
             "GET /orders": {"description": "List orders", "method": "GET", "path": "/orders"},
@@ -30,6 +43,7 @@ def _clear_wiki_cache():
 
 @pytest.fixture
 def client():
+    """A TestClient bound to the shared app instance."""
     return TestClient(app)
 
 
@@ -44,6 +58,7 @@ def mock_reader():
 
 
 def _use_reader(reader):
+    """Install a reader on app.state and return it (for inline test setup)."""
     app.state.wiki_reader = reader
     return reader
 

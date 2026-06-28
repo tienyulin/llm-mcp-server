@@ -4,10 +4,14 @@ Boots the real app (TestClient context runs the lifespan → starts the MCP
 session manager) and drives the JSON-RPC handshake: initialize → tools/list →
 tools/call, asserting a tool answers from the same wiki the REST path serves.
 """
+
+# pytest convention: the client_with_wiki fixture is injected as a same-named param.
+# pylint: disable=redefined-outer-name
+
 import json
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from http_api.main import create_app
@@ -16,19 +20,27 @@ SAMPLE_WIKI = {
     "schema_version": 2,
     "apis": {
         "inventory": {
-            "GET /inventory/{id}": {"method": "GET", "path": "/inventory/{id}",
-                                    "description": "Get inventory item",
-                                    "sources": ["inv.md"], "source_app": "inventory"},
+            "GET /inventory/{id}": {
+                "method": "GET",
+                "path": "/inventory/{id}",
+                "description": "Get inventory item",
+                "sources": ["inv.md"],
+                "source_app": "inventory",
+            },
         },
     },
     "concepts": {},
     "overviews": {},
     "knowledge": {
         "oracle-kb:oracle-flashback": {
-            "title": "Oracle Flashback", "source_app": "oracle-kb",
+            "title": "Oracle Flashback",
+            "source_app": "oracle-kb",
             "summary": "Oracle Flashback recovers data after accidental data loss.",
-            "topics": ["Flashback Table"], "key_points": ["Recovers dropped rows"],
-            "sources": ["oracle-flashback.md"], "source_version": "v1"},
+            "topics": ["Flashback Table"],
+            "key_points": ["Recovers dropped rows"],
+            "sources": ["oracle-flashback.md"],
+            "source_version": "v1",
+        },
     },
     "metadata": {"version": "1.0"},
 }
@@ -46,6 +58,7 @@ def _rpc(result_text: str) -> dict:
 
 @pytest.fixture
 def client_with_wiki():
+    """A booted TestClient (lifespan run) with a stub reader serving SAMPLE_WIKI."""
     app = create_app()
     with TestClient(app) as c:
         reader = MagicMock()
@@ -56,35 +69,69 @@ def client_with_wiki():
 
 
 def _init(c):
-    r = c.post("/mcp/", headers=_HDRS, json={
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {"protocolVersion": "2025-03-26", "capabilities": {},
-                   "clientInfo": {"name": "test", "version": "0"}}})
+    """Drive the MCP `initialize` handshake and return the raw HTTP response."""
+    r = c.post(
+        "/mcp/",
+        headers=_HDRS,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        },
+    )
     assert r.status_code == 200, r.text
     return r
 
 
 def test_mcp_initialize(client_with_wiki):
+    """initialize returns the expected server name."""
     body = _rpc(_init(client_with_wiki).text)
     assert body["result"]["serverInfo"]["name"] == "llm-wiki"
 
 
 def test_mcp_tools_list(client_with_wiki):
+    """tools/list exposes the full read query surface as MCP tools."""
     _init(client_with_wiki)
-    r = client_with_wiki.post("/mcp/", headers=_HDRS, json={
-        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    r = client_with_wiki.post(
+        "/mcp/",
+        headers=_HDRS,
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    )
     names = {t["name"] for t in _rpc(r.text)["result"]["tools"]}
     # core query surface exposed as MCP tools
-    assert {"search_apis", "semantic_search", "list_apis", "get_api_detail",
-            "list_concepts", "get_concept", "get_overview", "wiki_info",
-            "search_knowledge", "get_knowledge", "list_knowledge"} <= names
+    assert {
+        "search_apis",
+        "semantic_search",
+        "list_apis",
+        "get_api_detail",
+        "list_concepts",
+        "get_concept",
+        "get_overview",
+        "wiki_info",
+        "search_knowledge",
+        "get_knowledge",
+        "list_knowledge",
+    } <= names
 
 
 def test_mcp_tool_call_search(client_with_wiki):
+    """tools/call search_apis answers from the same wiki the REST path serves."""
     _init(client_with_wiki)
-    r = client_with_wiki.post("/mcp/", headers=_HDRS, json={
-        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-        "params": {"name": "search_apis", "arguments": {"query": "inventory"}}})
+    r = client_with_wiki.post(
+        "/mcp/",
+        headers=_HDRS,
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "search_apis", "arguments": {"query": "inventory"}},
+        },
+    )
     result = _rpc(r.text)["result"]
     assert result["isError"] is False
     payload = json.loads(result["content"][0]["text"])
@@ -94,19 +141,36 @@ def test_mcp_tool_call_search(client_with_wiki):
 def test_mcp_tool_call_search_knowledge(client_with_wiki):
     """Cross-domain entry point: 'data loss' retrieves the Oracle flashback doc."""
     _init(client_with_wiki)
-    r = client_with_wiki.post("/mcp/", headers=_HDRS, json={
-        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
-        "params": {"name": "search_knowledge", "arguments": {"query": "data loss"}}})
+    r = client_with_wiki.post(
+        "/mcp/",
+        headers=_HDRS,
+        json={
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "search_knowledge", "arguments": {"query": "data loss"}},
+        },
+    )
     payload = json.loads(_rpc(r.text)["result"]["content"][0]["text"])
     assert any(h["doc_id"] == "oracle-kb:oracle-flashback" for h in payload["results"])
 
 
 def test_mcp_tool_call_detail_has_sources(client_with_wiki):
+    """get_api_detail surfaces provenance (sources, source_app) over MCP."""
     _init(client_with_wiki)
-    r = client_with_wiki.post("/mcp/", headers=_HDRS, json={
-        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-        "params": {"name": "get_api_detail",
-                   "arguments": {"module": "inventory", "api_key": "GET /inventory/{id}"}}})
+    r = client_with_wiki.post(
+        "/mcp/",
+        headers=_HDRS,
+        json={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "get_api_detail",
+                "arguments": {"module": "inventory", "api_key": "GET /inventory/{id}"},
+            },
+        },
+    )
     detail = json.loads(_rpc(r.text)["result"]["content"][0]["text"])
     assert detail["sources"] == ["inv.md"]
     assert detail["source_app"] == "inventory"

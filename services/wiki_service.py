@@ -30,7 +30,7 @@ class WikiService:
             if key.endswith(".json"):
                 continue
             # Strip the prefix to get the relative path
-            relative = key[len(prefix):]
+            relative = key[len(prefix) :]
             if not relative:
                 continue
 
@@ -86,11 +86,15 @@ class WikiService:
             for api_key, detail in endpoints.items():
                 haystack = f"{module} {api_key} {detail}".lower()
                 if q in haystack:
-                    results.append({
-                        "module": module,
-                        "api_key": api_key,
-                        "description": detail.get("description", "") if isinstance(detail, dict) else "",
-                    })
+                    results.append(
+                        {
+                            "module": module,
+                            "api_key": api_key,
+                            "description": (
+                                detail.get("description", "") if isinstance(detail, dict) else ""
+                            ),
+                        }
+                    )
         return results
 
     def get_api_detail(self, module: str, api_key: str, wiki: dict | None = None) -> dict | None:
@@ -134,9 +138,16 @@ class WikiService:
         """
         apis = wiki.get("apis", {})
         concepts = wiki.get("concepts", {})
+        files = {f"{name}/SKILL.md": self._skill_md(name, apis)}
+        if concepts:
+            files[f"{name}/references/concepts.md"] = self._skill_concepts_md(concepts)
+        return files
+
+    @staticmethod
+    def _skill_md(name: str, apis: dict) -> str:
+        """Render the SKILL.md frontmatter + per-service endpoint listing."""
         total = sum(len(e) for e in apis.values() if isinstance(e, dict))
         modules = sorted(apis)
-
         front = (
             "---\n"
             f"name: {name}\n"
@@ -152,24 +163,28 @@ class WikiService:
                 desc = detail.get("description", "") if isinstance(detail, dict) else ""
                 body.append(f"- `{api_key}` — {desc}")
             body.append("")
-        files = {f"{name}/SKILL.md": front + "\n".join(body)}
+        return front + "\n".join(body)
 
-        if concepts:
-            ref = ["# Cross-cutting concepts\n"]
-            for cname, c in sorted(concepts.items()):
-                if not isinstance(c, dict):
-                    continue
-                ref.append(f"## {cname}")
-                ref.append(c.get("description", ""))
-                for r in c.get("related", []):
-                    ref.append(f"- {r}")
-                ref.append("")
-            files[f"{name}/references/concepts.md"] = "\n".join(ref)
-        return files
+    @staticmethod
+    def _skill_concepts_md(concepts: dict) -> str:
+        """Render the cross-cutting-concepts reference doc."""
+        ref = ["# Cross-cutting concepts\n"]
+        for cname, c in sorted(concepts.items()):
+            if not isinstance(c, dict):
+                continue
+            ref.append(f"## {cname}")
+            ref.append(c.get("description", ""))
+            for r in c.get("related", []):
+                ref.append(f"- {r}")
+            ref.append("")
+        return "\n".join(ref)
 
     # ---- Knowledge documents (prose/reference, not API specs) ----
 
-    def list_knowledge(self, wiki: dict, type: str = "") -> dict[str, dict]:
+    # `type` is the public param name (Diataxis doc_type); renaming changes the API.
+    def list_knowledge(  # pylint: disable=redefined-builtin
+        self, wiki: dict, type: str = ""
+    ) -> dict[str, dict]:
         """{doc_id: {title, source_app, topics, doc_type, tags}} — summary view.
         Optional `type` filters by Diataxis doc_type (tutorial/how-to/...)."""
         out = {}
@@ -178,11 +193,13 @@ class WikiService:
                 continue
             if type and e.get("doc_type") != type:
                 continue
-            out[doc_id] = {"title": e.get("title", doc_id),
-                           "source_app": e.get("source_app", ""),
-                           "topics": e.get("topics", []),
-                           "doc_type": e.get("doc_type"),
-                           "tags": e.get("tags", [])}
+            out[doc_id] = {
+                "title": e.get("title", doc_id),
+                "source_app": e.get("source_app", ""),
+                "topics": e.get("topics", []),
+                "doc_type": e.get("doc_type"),
+                "tags": e.get("tags", []),
+            }
         return out
 
     def get_knowledge(self, doc_id: str, wiki: dict) -> dict | None:
@@ -190,7 +207,10 @@ class WikiService:
         e = wiki.get("knowledge", {}).get(doc_id)
         return e if isinstance(e, dict) else None
 
-    def search_knowledge(self, query: str, wiki: dict, type: str = "") -> list[dict]:
+    # `type` is the public param name (Diataxis doc_type); renaming changes the API.
+    def search_knowledge(  # pylint: disable=redefined-builtin
+        self, query: str, wiki: dict, type: str = ""
+    ) -> list[dict]:
         """Keyword search across knowledge docs (title/summary/topics/key_points).
         Returns {doc_id, title, summary, source_app, doc_type, tags}. Optional
         `type` filters by Diataxis doc_type."""
@@ -201,16 +221,26 @@ class WikiService:
                 continue
             if type and e.get("doc_type") != type:
                 continue
-            hay = " ".join([
-                doc_id, e.get("title", ""), e.get("summary", ""),
-                " ".join(e.get("topics", [])), " ".join(e.get("key_points", [])),
-            ]).lower()
+            hay = " ".join(
+                [
+                    doc_id,
+                    e.get("title", ""),
+                    e.get("summary", ""),
+                    " ".join(e.get("topics", [])),
+                    " ".join(e.get("key_points", [])),
+                ]
+            ).lower()
             if q in hay:
-                results.append({"doc_id": doc_id, "title": e.get("title", doc_id),
-                                "summary": e.get("summary", ""),
-                                "source_app": e.get("source_app", ""),
-                                "doc_type": e.get("doc_type"),
-                                "tags": e.get("tags", [])})
+                results.append(
+                    {
+                        "doc_id": doc_id,
+                        "title": e.get("title", doc_id),
+                        "summary": e.get("summary", ""),
+                        "source_app": e.get("source_app", ""),
+                        "doc_type": e.get("doc_type"),
+                        "tags": e.get("tags", []),
+                    }
+                )
         return results
 
     def build_graph(self, wiki: dict) -> dict:
@@ -221,34 +251,57 @@ class WikiService:
         # ponytail: shared-source + concept membership only; add Adamic-Adar
         # (1.5) and Louvain communities if the graph needs richer clustering.
         """
-        apis = wiki.get("apis", {})
-        nodes, edges = [], []
-        by_source: dict[str, list[str]] = {}
+        nodes, by_source = self._endpoint_nodes(wiki.get("apis", {}))
+        edges = self._shared_source_edges(by_source)
+        concept_nodes, concept_edges = self._concept_nodes_edges(wiki.get("concepts", {}))
+        return {"nodes": nodes + concept_nodes, "edges": edges + concept_edges}
 
+    @staticmethod
+    def _endpoint_nodes(apis: dict) -> tuple[list[dict], dict[str, list[str]]]:
+        """Endpoint nodes plus a source-file -> [node_id] index for edge building."""
+        nodes: list[dict] = []
+        by_source: dict[str, list[str]] = {}
         for module, endpoints in apis.items():
             if not isinstance(endpoints, dict):
                 continue
             for api_key, detail in endpoints.items():
                 nid = f"{module}::{api_key}"
                 nodes.append({"id": nid, "type": "endpoint", "module": module})
-                for src in (detail.get("sources", []) if isinstance(detail, dict) else []):
+                for src in detail.get("sources", []) if isinstance(detail, dict) else []:
                     by_source.setdefault(src, []).append(nid)
+        return nodes, by_source
 
+    @staticmethod
+    def _shared_source_edges(by_source: dict[str, list[str]]) -> list[dict]:
+        """Pairwise shared-source edges (weight 4.0) between co-sourced endpoints."""
+        edges: list[dict] = []
         for src, members in by_source.items():
-            for i in range(len(members)):
-                for j in range(i + 1, len(members)):
-                    edges.append({"source": members[i], "target": members[j],
-                                  "weight": 4.0, "kind": "shared_source", "via": src})
+            for i, source_id in enumerate(members):
+                for target_id in members[i + 1 :]:
+                    edges.append(
+                        {
+                            "source": source_id,
+                            "target": target_id,
+                            "weight": 4.0,
+                            "kind": "shared_source",
+                            "via": src,
+                        }
+                    )
+        return edges
 
-        for cname, c in wiki.get("concepts", {}).items():
+    @staticmethod
+    def _concept_nodes_edges(concepts: dict) -> tuple[list[dict], list[dict]]:
+        """Concept nodes and their concept->endpoint membership edges (weight 3.0)."""
+        nodes: list[dict] = []
+        edges: list[dict] = []
+        for cname, c in concepts.items():
             if not isinstance(c, dict):
                 continue
             cid = f"concept::{cname}"
             nodes.append({"id": cid, "type": "concept"})
             for r in c.get("related", []):
                 edges.append({"source": cid, "target": r, "weight": 3.0, "kind": "concept"})
-
-        return {"nodes": nodes, "edges": edges}
+        return nodes, edges
 
     def parse_frontmatter(self, markdown: str) -> tuple[dict, str]:
         """Parse YAML frontmatter from markdown. Returns (frontmatter_dict, body)."""
@@ -260,10 +313,10 @@ class WikiService:
             return {}, markdown
 
         frontmatter_str = markdown[3:end_idx].strip()
-        body = markdown[end_idx + 3:].strip()
+        body = markdown[end_idx + 3 :].strip()
 
         try:
             frontmatter = yaml.safe_load(frontmatter_str)
             return frontmatter or {}, body
         except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML frontmatter: {e}")
+            raise ValueError(f"Invalid YAML frontmatter: {e}") from e

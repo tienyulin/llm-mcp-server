@@ -37,11 +37,13 @@ class MinioReader:
         try:
             if not client.bucket_exists(self._bucket):
                 client.make_bucket(self._bucket)
-                logger.info(f"Created bucket: {self._bucket}")
+                logger.info("Created bucket: %s", self._bucket)
             else:
-                logger.debug(f"Bucket exists: {self._bucket}")
-        except Exception as e:
-            logger.warning(f"Could not ensure bucket existence: {e}")
+                logger.debug("Bucket exists: %s", self._bucket)
+        # Best-effort bootstrap probe: a transient MinIO outage here must not
+        # abort reader construction — reads fall back / surface their own errors.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Could not ensure bucket existence: %s", e)
 
     def get_file(self, path: str) -> str | None:
         """Fetch a text file from Minio. Returns None if not found."""

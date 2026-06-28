@@ -70,16 +70,32 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Prefix a search tool's description with the translate-first reminder."""
         return f"⚠️ query 請先翻成 {lang}（單語語料）。\n{desc}"
 
-    @mcp.tool(description=_q(
-        "Search API endpoints across the wiki (path, description, app). "
-        "Returns matching {module, api_key, description} entries."))
+    _register_api_tools(mcp, get_query_service, _q)
+    _register_knowledge_tools(mcp, get_query_service, _q)
+    return mcp
+
+
+def _register_api_tools(
+    mcp: FastMCP, get_query_service: Callable[[], QueryService], _q: Callable[[str], str]
+) -> None:
+    """Register the API-surface tools (search/list/detail/concepts/overview/info)."""
+
+    @mcp.tool(
+        description=_q(
+            "Search API endpoints across the wiki (path, description, app). "
+            "Returns matching {module, api_key, description} entries."
+        )
+    )
     async def search_apis(query: str) -> str:
         results, mode = await get_query_service().search_apis(query)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
-    @mcp.tool(description=_q(
-        "Semantic (vector) search over API endpoints; falls back to keyword "
-        "search when the vector index is unavailable."))
+    @mcp.tool(
+        description=_q(
+            "Semantic (vector) search over API endpoints; falls back to keyword "
+            "search when the vector index is unavailable."
+        )
+    )
     async def semantic_search(query: str, top_k: int = 10) -> str:
         results, mode = await get_query_service().semantic_search(query, max(1, min(top_k, 50)))
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
@@ -94,7 +110,9 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Full detail for one endpoint (method, path, description, sources,
         provenance). `api_key` is like 'GET /items/{id}'."""
         detail = await get_query_service().get_api_detail(module, api_key)
-        return json.dumps(detail, ensure_ascii=False) if detail else f"Not found: {module} {api_key}"
+        return (
+            json.dumps(detail, ensure_ascii=False) if detail else f"Not found: {module} {api_key}"
+        )
 
     @mcp.tool()
     async def list_concepts() -> str:
@@ -119,13 +137,25 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         """Wiki statistics: module/endpoint counts and vector-index status."""
         return json.dumps(await get_query_service().wiki_info(), ensure_ascii=False)
 
-    @mcp.tool(description=_q(
-        "Search ingested KNOWLEDGE documents (how-tos, reference material — not "
-        "API specs). Use this for conceptual/how-to questions. Hybrid "
-        "(semantic + keyword) so paraphrases match. Optional `type` filters by "
-        "Diataxis doc_type (tutorial/how-to/reference/explanation). "
-        "Returns {doc_id, title, summary, source_app, doc_type, tags} matches."))
+
+def _register_knowledge_tools(
+    mcp: FastMCP, get_query_service: Callable[[], QueryService], _q: Callable[[str], str]
+) -> None:
+    """Register knowledge tools + the read-only knowledge/authoring resources."""
+
+    @mcp.tool(
+        description=_q(
+            "Search ingested KNOWLEDGE documents (how-tos, reference material — not "
+            "API specs). Use this for conceptual/how-to questions. Hybrid "
+            "(semantic + keyword) so paraphrases match. Optional `type` filters by "
+            "Diataxis doc_type (tutorial/how-to/reference/explanation). "
+            "Returns {doc_id, title, summary, source_app, doc_type, tags} matches."
+        )
+    )
+    # `type` mirrors the public REST/MCP query param name (Diataxis doc_type); renaming
+    # it would change the tool's wire schema.
     async def search_knowledge(query: str, type: str = "") -> str:
+        # pylint: disable=redefined-builtin
         results, mode = await get_query_service().search_knowledge(query, type=type)
         return json.dumps({"results": results, "mode": mode}, ensure_ascii=False)
 
@@ -136,7 +166,9 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
         return json.dumps(entry, ensure_ascii=False) if entry else f"No knowledge doc: {doc_id}"
 
     @mcp.tool()
-    async def list_knowledge(type: str = "") -> str:
+    # `type` mirrors the public REST/MCP query param name (Diataxis doc_type); renaming
+    # it would change the tool's wire schema.
+    async def list_knowledge(type: str = "") -> str:  # pylint: disable=redefined-builtin
         """List ingested knowledge documents ({doc_id: {title, source_app, topics,
         doc_type, tags}}). Optional `type` filters by Diataxis doc_type."""
         return json.dumps(await get_query_service().list_knowledge(type=type), ensure_ascii=False)
@@ -154,8 +186,6 @@ def build_mcp(get_query_service: Callable[[], QueryService]) -> FastMCP:
     @mcp.resource("authoring-contract://source-docs")
     async def authoring_contract() -> str:
         return _AUTHORING_CONTRACT
-
-    return mcp
 
 
 _AUTHORING_CONTRACT = """\

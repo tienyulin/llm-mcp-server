@@ -3,6 +3,10 @@ in the hot path; under concurrent load that serialized on the embedder and
 capped throughput (260->57 q/s). Repeated queries now skip the embed call.
 
 (This repo runs async via asyncio.run() — no pytest-asyncio auto mode.)"""
+
+# pytest convention: tests white-box the embedder's internal cache state.
+# pylint: disable=protected-access
+
 import asyncio
 import os
 from unittest.mock import AsyncMock, patch
@@ -11,6 +15,7 @@ from services.embeddings import QueryEmbedder
 
 
 def _embedder():
+    """Build a QueryEmbedder pinned to the real (non-mock) HTTP path, dim=4."""
     os.environ["MOCK_EMBEDDINGS"] = "false"
     e = QueryEmbedder()
     e.mock_mode = False
@@ -20,6 +25,7 @@ def _embedder():
 
 
 def _fake_response(vec):
+    """A stub httpx response whose JSON carries one embedding vector."""
     r = AsyncMock()
     r.raise_for_status = lambda: None
     r.json = lambda: {"data": [{"embedding": vec}]}
@@ -27,9 +33,10 @@ def _fake_response(vec):
 
 
 def test_second_identical_query_hits_cache():
+    """A repeated query is served from cache, so the endpoint is hit only once."""
     e = _embedder()
-    with patch("httpx.AsyncClient") as Client:
-        client = Client.return_value.__aenter__.return_value
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value.__aenter__.return_value
         client.post = AsyncMock(return_value=_fake_response([0.1, 0.2, 0.3, 0.4]))
 
         async def run():
@@ -43,9 +50,10 @@ def test_second_identical_query_hits_cache():
 
 
 def test_different_queries_each_embed():
+    """Distinct queries miss the cache and each hit the endpoint once."""
     e = _embedder()
-    with patch("httpx.AsyncClient") as Client:
-        client = Client.return_value.__aenter__.return_value
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value.__aenter__.return_value
         client.post = AsyncMock(return_value=_fake_response([1.0, 2.0, 3.0, 4.0]))
 
         async def run():
@@ -57,10 +65,11 @@ def test_different_queries_each_embed():
 
 
 def test_lru_eviction():
+    """Exceeding the cache cap evicts the least-recently-used entry."""
     e = _embedder()
     e._cache_max = 2
-    with patch("httpx.AsyncClient") as Client:
-        client = Client.return_value.__aenter__.return_value
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        client = mock_client_cls.return_value.__aenter__.return_value
         client.post = AsyncMock(return_value=_fake_response([0.0, 0.0, 0.0, 0.0]))
 
         async def run():

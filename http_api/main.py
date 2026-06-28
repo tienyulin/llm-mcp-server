@@ -30,61 +30,60 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
+    """Build the FastAPI app: shared state, routers, and the mounted MCP sub-app."""
     # Native MCP server (Streamable HTTP) over the SAME QueryService as REST.
     # Built before the app so its session-manager lifespan can be composed in.
-    mcp = build_mcp(lambda: _query_service_from_state(app))
+    mcp = build_mcp(lambda: _query_service_from_state(fastapi_app))
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(running_app: FastAPI):
         """Init MinioReader (+ optional PG reader), then run the MCP session
         manager (its lifespan must be hoisted here — mounted sub-app lifespans
         are not auto-run by Starlette)."""
-        app.state.wiki_reader = MinioReader()
-        app.state.pg_reader = pg_reader_from_env()
-        app.state.query_embedder = query_embedder_from_env()
-        if app.state.pg_reader is None:
-            logger.warning(
-                "PG_DSN not set — reads served from wiki.json only (no semantic search)"
-            )
+        running_app.state.wiki_reader = MinioReader()
+        running_app.state.pg_reader = pg_reader_from_env()
+        running_app.state.query_embedder = query_embedder_from_env()
+        if running_app.state.pg_reader is None:
+            logger.warning("PG_DSN not set — reads served from wiki.json only (no semantic search)")
         else:
-            await app.state.pg_reader.aopen()
+            await running_app.state.pg_reader.aopen()
             logger.info(
-                f"PG reader enabled (semantic search: "
-                f"{'on' if app.state.query_embedder else 'off — embeddings not configured'})"
+                "PG reader enabled (semantic search: %s)",
+                "on" if running_app.state.query_embedder else "off — embeddings not configured",
             )
         logger.info("MCP HTTP Server started (REST + native MCP at /mcp)")
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
-        if app.state.pg_reader is not None:
-            await app.state.pg_reader.aclose()
+        if running_app.state.pg_reader is not None:
+            await running_app.state.pg_reader.aclose()
         logger.info("MCP HTTP Server shutdown")
 
-    app = FastAPI(
+    fastapi_app = FastAPI(
         title="LLM Wiki HTTP API",
         version="1.0.0",
         description="Team-friendly API for wiki queries (REST + native MCP)",
         lifespan=lifespan,
     )
-    app.add_middleware(TokenBucketRateLimiter)  # no-op unless RATE_LIMIT_RPS > 0
+    fastapi_app.add_middleware(TokenBucketRateLimiter)  # no-op unless RATE_LIMIT_RPS > 0
 
     # Cache lives on the factory-time state (not lifespan) so tests that run
     # without the lifespan still find initialized state.
-    app.state.wiki_cache = WikiCache(ttl_seconds=3600)
-    app.state.wiki_reader = None
-    app.state.pg_reader = None
-    app.state.query_embedder = None
+    fastapi_app.state.wiki_cache = WikiCache(ttl_seconds=3600)
+    fastapi_app.state.wiki_reader = None
+    fastapi_app.state.pg_reader = None
+    fastapi_app.state.query_embedder = None
 
-    app.include_router(health.router)
-    app.include_router(query.router)
-    app.include_router(cache.router)
-    app.mount("/mcp", mcp_app)  # native MCP endpoint: POST /mcp/
-    return app
+    fastapi_app.include_router(health.router)
+    fastapi_app.include_router(query.router)
+    fastapi_app.include_router(cache.router)
+    fastapi_app.mount("/mcp", mcp_app)  # native MCP endpoint: POST /mcp/
+    return fastapi_app
 
 
-def _query_service_from_state(app: FastAPI) -> QueryService:
+def _query_service_from_state(running_app: FastAPI) -> QueryService:
     """Build a QueryService from the live reader singletons (shared with REST)."""
-    s = app.state
+    s = running_app.state
     return QueryService(
         wiki_reader=s.wiki_reader,
         cache=s.wiki_cache,
@@ -98,4 +97,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8002)

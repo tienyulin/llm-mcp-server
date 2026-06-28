@@ -22,6 +22,10 @@ class WikiCache:
         self._cache: dict = {}
         self._timestamps: dict = {}
 
+    def __len__(self) -> int:
+        """Number of currently stored entries (expiry is lazy, on get())."""
+        return len(self._cache)
+
     def get(self, key: str) -> Any:
         """Get value if not expired."""
         if key not in self._cache:
@@ -45,13 +49,12 @@ class WikiCache:
         """
         if source_app:
             keys_to_delete = [
-                k for k in self._cache.keys()
-                if k == _WIKI_CACHE_KEY or source_app in str(k).split(":")
+                k for k in self._cache if k == _WIKI_CACHE_KEY or source_app in str(k).split(":")
             ]
             for k in keys_to_delete:
                 del self._cache[k]
                 del self._timestamps[k]
-            logger.info(f"Invalidated {len(keys_to_delete)} cache entries for {source_app}")
+            logger.info("Invalidated %d cache entries for %s", len(keys_to_delete), source_app)
         else:
             # Clear all
             self._cache.clear()

@@ -17,12 +17,36 @@ import math
 import os
 import re
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+@dataclass
+class _HttpEmbedConfig:
+    """Provider/transport settings for the real embeddings endpoint."""
+
+    api_key: str
+    model: str
+    timeout: float
+    send_dimensions: bool
+
+    @classmethod
+    def from_env(cls) -> "_HttpEmbedConfig":
+        """Load the HTTP embedding config from the EMBEDDING_* environment vars."""
+        return cls(
+            api_key=os.getenv("EMBEDDING_API_KEY", ""),
+            model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+            timeout=float(os.getenv("EMBEDDING_TIMEOUT", "30")),
+            # Query vectors must match the index vectors' dimension — send the same
+            # {"dimensions": dim} the processor sends (EMBEDDING_SEND_DIMENSIONS).
+            send_dimensions=os.getenv("EMBEDDING_SEND_DIMENSIONS", "false").lower() == "true",
+        )
 
 
 def mock_embed(text: str, dim: int) -> list[float]:
@@ -46,14 +70,9 @@ class QueryEmbedder:
 
     def __init__(self):
         self.base_url = (os.getenv("EMBEDDING_BASE_URL") or "").rstrip("/")
-        self.api_key = os.getenv("EMBEDDING_API_KEY", "")
-        self.model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
         self.dim = int(os.getenv("EMBEDDING_DIM", "1536"))
-        self.timeout = float(os.getenv("EMBEDDING_TIMEOUT", "30"))
         self.mock_mode = os.getenv("MOCK_EMBEDDINGS", "false").lower() == "true"
-        # Query vectors must match the index vectors' dimension — send the same
-        # {"dimensions": dim} the processor sends (EMBEDDING_SEND_DIMENSIONS).
-        self.send_dimensions = os.getenv("EMBEDDING_SEND_DIMENSIONS", "false").lower() == "true"
+        self.http = _HttpEmbedConfig.from_env()
         # Bounded LRU cache of query -> vector. Every hybrid/semantic search
         # embeds the query in the hot path; under concurrent load that serializes
         # on the embedder and caps throughput (measured: 260 -> 57 q/s). Repeated
@@ -62,9 +81,14 @@ class QueryEmbedder:
         self._cache_max = int(os.getenv("QUERY_EMBED_CACHE", "1000"))
 
     def is_enabled(self) -> bool:
+        """True when embeddings are available (mock mode or a configured endpoint)."""
         return self.mock_mode or bool(self.base_url)
 
     async def aembed_query(self, text: str) -> list[float]:
+        """Embed one query string, returning a vector of length `self.dim`.
+
+        Mock mode is deterministic and uncached; the real path serves from a
+        bounded LRU cache before calling the embeddings endpoint."""
         if self.mock_mode:
             return mock_embed(text, self.dim)
 
@@ -74,12 +98,12 @@ class QueryEmbedder:
             return cached
 
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        body = {"model": self.model, "input": [text]}
-        if self.send_dimensions:
+        if self.http.api_key:
+            headers["Authorization"] = f"Bearer {self.http.api_key}"
+        body: dict[str, Any] = {"model": self.http.model, "input": [text]}
+        if self.http.send_dimensions:
             body["dimensions"] = self.dim
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.http.timeout) as client:
             response = await client.post(
                 f"{self.base_url}/v1/embeddings",
                 headers=headers,
@@ -88,9 +112,7 @@ class QueryEmbedder:
             response.raise_for_status()
             vec = response.json()["data"][0]["embedding"]
         if len(vec) != self.dim:
-            raise ValueError(
-                f"Embedding dimension mismatch: expected {self.dim}, got {len(vec)}"
-            )
+            raise ValueError(f"Embedding dimension mismatch: expected {self.dim}, got {len(vec)}")
         self._cache[text] = vec
         if len(self._cache) > self._cache_max:
             self._cache.popitem(last=False)  # evict oldest
@@ -98,5 +120,6 @@ class QueryEmbedder:
 
 
 def query_embedder_from_env() -> QueryEmbedder | None:
+    """Build a QueryEmbedder from env, or None when embeddings are disabled."""
     embedder = QueryEmbedder()
     return embedder if embedder.is_enabled() else None

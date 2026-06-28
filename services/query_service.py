@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class QueryService:
+    """PG-first read facade with cached-wiki fallback for every read endpoint."""
+
     def __init__(self, wiki_reader, cache: WikiCache, pg_reader=None, query_embedder=None):
         self._wiki_reader = wiki_reader
         self._cache = cache
@@ -59,7 +61,9 @@ class QueryService:
                 result = await pg_call(pg)
                 if result:
                     return result, True
-            except Exception:
+            # Any PG failure degrades to the cached-wiki path; the reader's own
+            # breaker has already tripped, so we just swallow and fall back.
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass  # breaker tripped inside the reader; use fallback
         return None, False
 
@@ -68,15 +72,18 @@ class QueryService:
     # ------------------------------------------------------------------
 
     async def list_apis(self, module: str = "") -> dict:
+        """API keys grouped by module (PG-first, cached-wiki fallback)."""
         result, _ = await self._pg_first(lambda pg: pg.list_apis(module))
         if result is None:
             result = self._wiki_service.list_apis(module, wiki=await self._get_wiki())
         return result
 
     async def search_apis(self, query: str) -> tuple[list, str]:
-        # Hybrid (vector+keyword RRF) when PG+embeddings are up — keyword alone
-        # missed paraphrased endpoint queries. Falls back to pg keyword, then the
-        # cached-wiki scan, so an unconfigured/down PG degrades cleanly.
+        """Search API endpoints, returning (results, mode).
+
+        Hybrid (vector+keyword RRF) when PG+embeddings are up — keyword alone
+        missed paraphrased endpoint queries. Falls back to pg keyword, then the
+        cached-wiki scan, so an unconfigured/down PG degrades cleanly."""
         pg = self._pg()
         if pg is not None and self._embedder is not None:
             try:
@@ -85,8 +92,9 @@ class QueryService:
                 results = await pg.hybrid_search_apis(qvec, query, min_cosine=min_cos)
                 if results:
                     return results, "hybrid"
-            except Exception as e:
-                logger.warning(f"API hybrid search failed, falling back to keyword: {e}")
+            # Degrade to the keyword path on any embed/PG failure rather than 5xx.
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning("API hybrid search failed, falling back to keyword: %s", e)
         results, from_pg = await self._pg_first(lambda pg: pg.keyword_search(query))
         if from_pg:
             return results, "pg_keyword"
@@ -94,6 +102,7 @@ class QueryService:
         return results, "wiki_scan"
 
     async def semantic_search(self, query: str, top_k: int) -> tuple[list, str]:
+        """Vector search, returning (results, mode); keyword fallback when PG/embeddings down."""
         pg = self._pg()
         if pg is not None and self._embedder is not None:
             try:
@@ -101,36 +110,45 @@ class QueryService:
                 results = await pg.semantic_search(qvec, top_k)
                 if results:
                     return results, "semantic"
-            except Exception as e:
-                logger.warning(f"Semantic search failed, falling back to keyword: {e}")
+            # Degrade to the keyword path on any embed/PG failure rather than 5xx.
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning("Semantic search failed, falling back to keyword: %s", e)
 
         results = self._wiki_service.search_apis(query, wiki=await self._get_wiki())[:top_k]
         return results, "keyword_fallback"
 
     async def get_api_detail(self, module: str, api_key: str) -> Optional[dict]:
+        """Full detail for one endpoint (PG-first, cached-wiki fallback)."""
         detail, from_pg = await self._pg_first(lambda pg: pg.get_api_detail(module, api_key))
         if not from_pg:
-            detail = self._wiki_service.get_api_detail(
-                module, api_key, wiki=await self._get_wiki()
-            )
+            detail = self._wiki_service.get_api_detail(module, api_key, wiki=await self._get_wiki())
         return detail
 
     async def list_concepts(self) -> dict:
+        """Cross-app concepts (summary view) from the cached wiki."""
         return self._wiki_service.list_concepts(await self._get_wiki())
 
     async def get_concept(self, name: str) -> Optional[dict]:
+        """Full concept record, or None when absent."""
         return self._wiki_service.get_concept(name, await self._get_wiki())
 
     async def get_overview(self, app: str) -> Optional[dict]:
+        """Per-app overview record, or None when absent."""
         return self._wiki_service.get_overview(app, await self._get_wiki())
 
-    async def list_knowledge(self, type: str = "") -> dict:
+    # `type` is the public param name (Diataxis doc_type); renaming changes the API.
+    async def list_knowledge(self, type: str = "") -> dict:  # pylint: disable=redefined-builtin
+        """Knowledge documents (summary view), optionally filtered by doc_type."""
         return self._wiki_service.list_knowledge(await self._get_wiki(), type=type)
 
     async def get_knowledge(self, doc_id: str):
+        """Full knowledge entry, or None when absent."""
         return self._wiki_service.get_knowledge(doc_id, await self._get_wiki())
 
-    async def search_knowledge(self, query: str, type: str = "") -> tuple[list, str]:
+    # `type` is the public param name (Diataxis doc_type); renaming changes the API.
+    async def search_knowledge(  # pylint: disable=redefined-builtin
+        self, query: str, type: str = ""
+    ) -> tuple[list, str]:
         """Hybrid (vector+keyword RRF) when PG + embeddings are available; else
         keyword scan over the cached wiki. Mirrors semantic_search's contract:
         a degraded-but-answerable query never errors. Results are enriched with
@@ -145,8 +163,9 @@ class QueryService:
                 hits = await pg.hybrid_search_knowledge(qvec, query, min_cosine=min_cos)
                 if hits:
                     results, mode = hits, "hybrid"
-            except Exception as e:
-                logger.warning(f"Knowledge hybrid search failed, falling back to keyword: {e}")
+            # Degrade to the keyword path on any embed/PG failure rather than 5xx.
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning("Knowledge hybrid search failed, falling back to keyword: %s", e)
         if results is None:
             results = self._wiki_service.search_knowledge(query, await self._get_wiki(), type=type)
             return results, "keyword_fallback"
@@ -154,20 +173,23 @@ class QueryService:
         knowledge = (await self._get_wiki()).get("knowledge", {})
         enriched = []
         for r in results:
-            e = knowledge.get(r.get("doc_id"), {})
-            r = {**r, "doc_type": e.get("doc_type"), "tags": e.get("tags", [])}
+            entry = knowledge.get(r.get("doc_id"), {})
+            r = {**r, "doc_type": entry.get("doc_type"), "tags": entry.get("tags", [])}
             if type and r["doc_type"] != type:
                 continue
             enriched.append(r)
         return enriched, mode
 
     async def build_skill(self, name: str) -> dict:
+        """Package the cached wiki into an Anthropic Skill folder ({path: content})."""
         return self._wiki_service.build_skill(await self._get_wiki(), name)
 
     async def build_graph(self) -> dict:
+        """Knowledge graph (endpoint + concept nodes, weighted edges)."""
         return self._wiki_service.build_graph(await self._get_wiki())
 
     async def wiki_info(self) -> dict:
+        """Wiki statistics plus vector-index availability/stats."""
         wiki = await self._get_wiki()
 
         total_endpoints = sum(len(apis) for apis in wiki.get("apis", {}).values())
@@ -183,7 +205,9 @@ class QueryService:
                     "semantic_search": self._embedder is not None,
                     **stats,
                 }
-            except Exception:
+            # Stats are a best-effort side panel — any PG failure just reports
+            # the index as unavailable instead of failing the whole response.
+            except Exception:  # pylint: disable=broad-exception-caught
                 vector_index = {"available": False}
 
         return {

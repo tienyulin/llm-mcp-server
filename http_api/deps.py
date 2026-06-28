@@ -13,6 +13,7 @@ from services.query_service import QueryService
 
 
 def get_query_service(request: Request) -> QueryService:
+    """Assemble a per-request QueryService from the resources on app.state."""
     s = request.app.state
     return QueryService(
         wiki_reader=s.wiki_reader,
@@ -23,4 +24,5 @@ def get_query_service(request: Request) -> QueryService:
 
 
 def get_cache(request: Request) -> WikiCache:
+    """Return the shared WikiCache held on app.state."""
     return request.app.state.wiki_cache

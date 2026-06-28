@@ -1,4 +1,8 @@
 """Tests for the token-bucket rate limiting middleware."""
+
+# pytest convention: a test defers an import to monkeypatch a module attribute.
+# pylint: disable=import-outside-toplevel
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -6,38 +10,43 @@ from http_api.rate_limit import TokenBucketRateLimiter
 
 
 def make_app(rps: float) -> TestClient:
+    """Build a TestClient for a minimal app behind the rate limiter at `rps`."""
     app = FastAPI()
     app.add_middleware(TokenBucketRateLimiter, rps=rps)
 
     @app.get("/ping")
     async def ping():
+        """Rate-limited probe endpoint."""
         return {"ok": True}
 
     @app.get("/health")
     async def health():
+        """Exempt health endpoint (never rate-limited)."""
         return {"status": "ok"}
 
     return TestClient(app)
 
 
 def test_disabled_by_default_allows_everything():
+    """rps=0 disables limiting, so every request is allowed."""
     client = make_app(rps=0)
     for _ in range(50):
         assert client.get("/ping").status_code == 200
 
 
 def test_burst_then_429():
+    """Requests beyond the burst allowance return 429 with a Retry-After header."""
     client = make_app(rps=5)  # burst = 10
     statuses = [client.get("/ping").status_code for _ in range(15)]
     assert statuses[:10] == [200] * 10
     assert 429 in statuses[10:]
 
-    limited = next(r for r in [client.get("/ping") for _ in range(3)]
-                   if r.status_code == 429)
+    limited = next(r for r in [client.get("/ping") for _ in range(3)] if r.status_code == 429)
     assert limited.headers.get("Retry-After") == "1"
 
 
 def test_health_is_exempt():
+    """/health stays 200 even after the bucket is exhausted on /ping."""
     client = make_app(rps=1)  # burst = 2
     # exhaust the bucket on /ping
     for _ in range(5):
@@ -48,6 +57,7 @@ def test_health_is_exempt():
 
 
 def test_tokens_refill_over_time(monkeypatch):
+    """Tokens refill at `rps` per second, re-allowing requests after a wait."""
     import http_api.rate_limit as rl
 
     fake_now = [1000.0]
