@@ -1,0 +1,24 @@
+[tool.black]
+line-length = 100
+target-version = ["py314"]
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+
+[tool.pylint.main]
+py-version = "3.14"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+# duplicate-code fires on two intentional isomorphic spots, not copy-paste drift:
+#   1. The QueryService(...) assembly appears in both http_api/deps.py (per-request
+#      DI) and http_api/main.py (the MCP closure) — the documented dual injection
+#      pattern (app.state + per-request), kept deliberately parallel.
+#   2. Test-fixture wiki blocks are intentionally mirrored across suites so each
+#      test file is self-contained and reads the same shape the service returns.
+disable = ["duplicate-code"]

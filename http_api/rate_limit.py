@@ -4,6 +4,7 @@ Deliberately dependency-free to match the project's minimal style. Enabled by
 setting RATE_LIMIT_RPS > 0 (requests/second per client IP, burst = 2x rps);
 disabled by default. /health is exempt so orchestrator probes never starve.
 """
+
 import os
 import time
 
@@ -14,7 +15,11 @@ from starlette.responses import JSONResponse
 _EXEMPT_PATHS = {"/health"}
 
 
-class TokenBucketRateLimiter(BaseHTTPMiddleware):
+# A Starlette middleware's public surface is the single `dispatch` hook, so the
+# one-public-method count is intrinsic to the base class, not a design smell.
+class TokenBucketRateLimiter(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods
+    """Token-bucket limiter (per client IP) implemented as a Starlette middleware."""
+
     def __init__(self, app, rps: float | None = None):
         super().__init__(app)
         self.rps = rps if rps is not None else float(os.getenv("RATE_LIMIT_RPS", "0"))

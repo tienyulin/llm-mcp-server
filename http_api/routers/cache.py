@@ -1,3 +1,5 @@
+"""Cache-invalidation endpoint, called by wiki-processor after a wiki update."""
+
 import logging
 
 from fastapi import APIRouter, Depends
@@ -13,7 +15,7 @@ router = APIRouter()
 
 @router.post("/cache/invalidate", response_model=CacheInvalidateResponse)
 async def invalidate_cache(
-    request: CacheInvalidateRequest = None,
+    request: CacheInvalidateRequest | None = None,
     cache: WikiCache = Depends(get_cache),
 ):
     """
@@ -25,14 +27,14 @@ async def invalidate_cache(
     This endpoint is called by wiki-processor after successful wiki update.
     """
     source_app = request.source_app if request else None
-    prev_size = len(cache._cache)
+    prev_size = len(cache)
 
     cache.invalidate_by_source(source_app)
 
-    curr_size = len(cache._cache)
+    curr_size = len(cache)
     invalidated = prev_size - curr_size
 
-    logger.info(f"Cache invalidated: {invalidated} entries removed (source_app={source_app})")
+    logger.info("Cache invalidated: %d entries removed (source_app=%s)", invalidated, source_app)
 
     return CacheInvalidateResponse(
         status="ok",

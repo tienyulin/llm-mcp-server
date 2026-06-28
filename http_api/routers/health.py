@@ -1,3 +1,5 @@
+"""Liveness probe endpoint for orchestrator health checks."""
+
 from fastapi import APIRouter
 
 router = APIRouter()
